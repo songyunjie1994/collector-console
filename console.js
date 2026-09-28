@@ -20,7 +20,26 @@ const CONFIG = Object.freeze({
 });
 
 const SESSION_KEY = "qca-console-session";
-const state = { session: null, agents: [], selectedAgentId: null, schedules: [], runs: [] };
+const state = { session: null, agents: [], selectedAgentId: null, schedules: [], runs: [], adding: false };
+
+// 工具显示名：优先用设备上报的名字（设备更新后会自动带上），没有就用这张表兜底。
+// 表里没有的 id 直接显示 id 本身，不猜。
+const TOOL_NAMES = {
+  "liyang-tina": "李杨 tina",
+  "liyang-tes": "李杨 tes",
+  "huihe": "惠和",
+  "yujianweilai-1": "域见未来 1",
+  "tool5": "李杨赫丝"
+};
+function toolLabel(id) {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  const fromDevice = (agent?.status?.toolNames || []).find((row) => row.id === id);
+  return fromDevice?.name || TOOL_NAMES[id] || id;
+}
+function deviceTools() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  return Array.isArray(agent?.status?.tools) ? agent.status.tools : [];
+}
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -125,17 +144,38 @@ function weekdayLabel(days) {
   return `周${days.map((d) => names[d] || d).join("、")}`;
 }
 
+/** 新增表单：只列出这台设备确实有、且还没配过的工具 */
+function renderAddRow() {
+  const used = new Set(state.schedules.map((row) => row.tool_id));
+  const options = deviceTools().filter((id) => !used.has(id));
+  if (!options.length) {
+    return '<tr class="new-row"><td colspan="8" class="pad muted">这台设备的工具都已配置过，或它还没上报工具清单。</td></tr>';
+  }
+  return `<tr class="new-row" id="newRow">
+    <td><input type="checkbox" data-nf="enabled" checked></td>
+    <td><select data-nf="toolId">${options.map((id) => `<option value="${esc(id)}">${esc(toolLabel(id))}（${esc(id)}）</option>`).join("")}</select></td>
+    <td><input type="time" data-nf="timeOfDay" value="07:00"></td>
+    <td><input type="text" data-nf="timezone" size="12" value="Asia/Shanghai"></td>
+    <td><input type="time" data-nf="winFrom"> – <input type="time" data-nf="winTo"></td>
+    <td><select data-nf="missedPolicy"><option value="skip">跳过不补</option><option value="catchup">补跑一次</option></select></td>
+    <td class="muted small">保存后先显示「云端已保存」，等设备拉取后变成「设备已应用」</td>
+    <td><button class="primary small-btn" data-save-new>保存</button> <button class="ghost small-btn" data-cancel-new>取消</button></td>
+  </tr>`;
+}
+
 function renderSchedules() {
   const body = $("#scheduleBody");
   if (!state.selectedAgentId) {
     body.innerHTML = '<tr><td colspan="8" class="muted pad">先在左边选一台采集机</td></tr>';
     return;
   }
-  if (!state.schedules.length) {
-    body.innerHTML = '<tr><td colspan="8" class="muted pad">这台采集机还没有定时配置。点右边的「新增」为每个工具加一条。</td></tr>';
+  const addButton = $("#addSchedule");
+  if (addButton) addButton.disabled = false;
+  if (!state.schedules.length && !state.adding) {
+    body.innerHTML = '<tr><td colspan="8" class="muted pad">这台采集机还没有定时配置。点右上角的「新增」为工具加一条。</td></tr>';
     return;
   }
-  body.innerHTML = state.schedules.map((row) => {
+  body.innerHTML = (state.adding ? renderAddRow() : "") + state.schedules.map((row) => {
     const saved = Number(row.config_version || 0);
     const applied = Number(row.applied_version || 0);
     const synced = applied >= saved;
@@ -163,6 +203,11 @@ function renderSchedules() {
   body.querySelectorAll("[data-save]").forEach((button) => {
     button.addEventListener("click", () => saveRow(button.closest("tr")));
   });
+  // 新增行的按钮
+  const saveNew = body.querySelector("[data-save-new]");
+  if (saveNew) saveNew.addEventListener("click", () => saveNewRow());
+  const cancelNew = body.querySelector("[data-cancel-new]");
+  if (cancelNew) cancelNew.addEventListener("click", () => { state.adding = false; renderSchedules(); });
 }
 
 function runStatusPill(status) {
@@ -260,6 +305,40 @@ async function saveRow(row) {
   }
 }
 
+/** 保存新增的定时：expectedVersion=0 表示"新建"，服务端会拒绝覆盖已有配置 */
+async function saveNewRow() {
+  const row = $("#newRow");
+  if (!row) return;
+  const pick = (field) => row.querySelector(`[data-nf="${field}"]`);
+  const toolId = pick("toolId").value;
+  const timeOfDay = pick("timeOfDay").value;
+  const timezone = pick("timezone").value.trim() || "Asia/Shanghai";
+  if (!timeOfDay) { toast("请先填每天几点跑", "warn"); return; }
+  const winFrom = pick("winFrom").value;
+  const winTo = pick("winTo").value;
+  try {
+    const result = await api("save_schedule", {
+      agentId: state.selectedAgentId,
+      expectedVersion: 0,
+      schedule: {
+        toolId,
+        toolName: toolLabel(toolId),
+        enabled: pick("enabled").checked,
+        timeOfDay,
+        timezone,
+        runWindow: winFrom || winTo ? { from: winFrom || null, to: winTo || null } : {},
+        missedPolicy: pick("missedPolicy").value
+      }
+    });
+    state.adding = false;
+    toast(`已保存 ${toolLabel(toolId)}：云端 v${result.configVersion}。等设备下一次心跳（约 20 秒）后会变成「设备已应用」。`, "ok");
+    await loadSchedules();
+    await loadAgents();
+  } catch (error) {
+    toast(`保存失败：${error.message}`, "error");
+  }
+}
+
 async function refreshAll() {
   try {
     await loadAgents();
@@ -289,6 +368,11 @@ function wireEvents() {
   $("#logoutBtn").addEventListener("click", () => { saveSession(null); state.session = null; showLogin(); });
   $("#refreshAgents").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
+  $("#addSchedule").addEventListener("click", () => {
+    if (!state.selectedAgentId) { toast("先在左边选一台采集机", "warn"); return; }
+    state.adding = true;
+    renderSchedules();
+  });
 }
 
 async function boot() {
