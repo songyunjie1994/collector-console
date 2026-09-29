@@ -52,6 +52,22 @@ function scheduleFor(toolId) {
 function lastRunFor(toolId) {
   return state.runs.find((row) => row.tool_id === toolId) || null;
 }
+function deviceScheduleState(toolId) {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  const rows = agent?.status?.toolSchedule;
+  return Array.isArray(rows) ? (rows.find((row) => row.toolId === toolId) || null) : null;
+}
+/** "下次大约 HH:MM" —— 用设备上报的下次执行时间（没上报就留空，不猜） */
+function nextRunText(toolId) {
+  const info = deviceScheduleState(toolId);
+  if (!info?.nextRunAt) return "";
+  const when = Date.parse(info.nextRunAt);
+  if (!Number.isFinite(when)) return "";
+  const deltaMin = Math.round((when - Date.now()) / 60000);
+  const clock = new Date(when).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const rel = deltaMin <= 0 ? "（已到点，等采集空闲）" : deltaMin < 60 ? `（约 ${deltaMin} 分钟后）` : `（约 ${Math.round(deltaMin / 60)} 小时后）`;
+  return ` · 下次 ${clock}${rel}`;
+}
 
 function toast(message, kind = "info") {
   const node = $("#toast");
@@ -252,17 +268,14 @@ function renderTools() {
       <div class="tool-schedule">
         <label class="schedule-switch">
           <input type="checkbox" data-tf="enabled" ${schedule?.enabled === false ? "" : "checked"}>
-          <span>每天</span>
+          <span>自动采集 每</span>
         </label>
-        <input type="time" data-tf="timeOfDay" value="${esc(schedule?.time_of_day || "07:00")}">
-        <select data-tf="missedPolicy">
-          <option value="skip" ${schedule?.missed_policy === "skip" ? "selected" : ""}>错过跳过</option>
-          <option value="catchup" ${schedule?.missed_policy === "catchup" ? "selected" : ""}>错过补跑</option>
-        </select>
-        <button class="schedule-save" data-tool="${esc(toolId)}">${schedule ? "保存" : "设定时"}</button>
+        <input type="number" data-tf="intervalHours" min="1" max="168" step="1" value="${esc(schedule?.interval_hours || 6)}">
+        <span class="schedule-every">小时</span>
+        <button class="schedule-save" data-tool="${esc(toolId)}">${schedule ? "保存" : "开启"}</button>
       </div>
-      ${schedule ? `<div class="tool-hint muted small">云端 v${esc(saved)} · 设备已应用 v${esc(applied)}${synced ? "（已生效）" : "（等设备拉取）"}</div>`
-        : '<div class="tool-hint muted small">这个工具还没有定时计划</div>'}
+      ${schedule ? `<div class="tool-hint muted small">云端 v${esc(saved)} · 设备已应用 v${esc(applied)}${synced ? "（已生效）" : "（等设备拉取）"}${nextRunText(toolId)}</div>`
+        : '<div class="tool-hint muted small">这个工具还没开启自动采集</div>'}
     </article>`;
   }).join("");
   grid.querySelectorAll("[data-tool]").forEach((button) => {
@@ -330,13 +343,16 @@ async function loadRuns() {
   renderRuns();
 }
 
-/** 保存某个工具的定时：已有配置带版本号（乐观锁），没有则新建 */
+/** 保存某个工具的自动采集：间隔必须是 1~168 的整数小时（与旧版同一规则） */
 async function saveTool(card) {
   const toolId = card.querySelector("[data-tool]").dataset.tool;
   const pick = (field) => card.querySelector(`[data-tf="${field}"]`);
   const existing = scheduleFor(toolId);
-  const timeOfDay = pick("timeOfDay").value;
-  if (!timeOfDay) { toast("请先选每天几点跑", "warn"); return; }
+  const intervalHours = Number(pick("intervalHours").value);
+  if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
+    toast("自动采集间隔必须是 1 至 168 的整数小时", "warn");
+    return;
+  }
   try {
     const result = await api("save_schedule", {
       agentId: state.selectedAgentId,
@@ -345,10 +361,7 @@ async function saveTool(card) {
         toolId,
         toolName: toolLabel(toolId),
         enabled: pick("enabled").checked,
-        timeOfDay,
-        timezone: existing?.timezone || "Asia/Shanghai",
-        runWindow: existing?.run_window || {},
-        missedPolicy: pick("missedPolicy").value
+        intervalHours
       }
     });
     toast(`已保存 ${toolLabel(toolId)}：云端 v${result.configVersion}。等设备下一次心跳（约 20 秒）后会显示「已应用」。`, "ok");
