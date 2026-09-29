@@ -197,3 +197,24 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 .toast.ok { background: linear-gradient(135deg, #1c9c74, #158262); }
 .toast.warn { background: linear-gradient(135deg, #d9924a, #bf6d20); }
 .toast.error { background: linear-gradient(135deg, #e2647b, #c33a52); }
+
+/* ---------------- 排版修正（2026-09-29 实测截图后补） ---------------- */
+/* 控制条挤成一团：每项都不许内部折行，间隔输入框固定窄宽（与旧版一致） */
+.control-bar { flex-wrap: wrap; gap: 20px; }
+.control-bar button, .control-bar label, .control-bar span, .hero-user button { white-space: nowrap; }
+.range-control { flex: 0 1 auto; min-width: 300px; }
+.range-control label { white-space: nowrap; }
+.schedule-control { flex: 0 0 auto; min-width: 300px; padding-left: 18px; border-left: 1px solid #e7e9f0; }
+.schedule-line { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; }
+.schedule-switch { display: flex; align-items: center; gap: 6px; color: #525c72; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.schedule-switch input { width: 16px; height: 16px; accent-color: #6b4ed5; }
+.schedule-every { color: #8a91a2; font-size: 11px; white-space: nowrap; }
+#autoHours { width: 58px; height: 34px; padding: 0 7px; border: 1px solid #dfe3ed; border-radius: 8px; outline: none; color: #273149; background: #f9faff; text-align: center; }
+.schedule-save { height: 34px; padding: 0 12px; border: 1px solid #d8dcef; border-radius: 8px; color: #654bc8; background: #f4f1ff; font-size: 11px; font-weight: 800; }
+.schedule-save:hover:not(:disabled) { border-color: #7658e8; }
+.schedule-save:disabled { opacity: .5; cursor: not-allowed; }
+.schedule-control small { display: block; margin-top: 5px; color: #979eae; font-size: 10px; max-width: 520px; }
+.overview { flex: 0 0 auto; }
+/* 顶栏右侧按钮不要被拉成竖排 */
+.hero-user { flex-direction: row; }
+.hero-user button { padding: 7px 12px; line-height: 1.2; }

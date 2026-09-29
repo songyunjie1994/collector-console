@@ -20,7 +20,7 @@ const CONFIG = Object.freeze({
 });
 
 const SESSION_KEY = "qca-console-session";
-const state = { session: null, agents: [], selectedAgentId: null, schedules: [], runs: [] };
+const state = { session: null, agents: [], selectedAgentId: null, auto: null, runs: [] };
 
 // 工具显示名：优先用设备上报的名字，没有就用这张表兜底；表里没有就直接显示 id。
 const TOOL_NAMES = {
@@ -46,20 +46,16 @@ function deviceTools() {
   const tools = agent?.status?.tools;
   return Array.isArray(tools) ? tools : [];
 }
-function scheduleFor(toolId) {
-  return state.schedules.find((row) => row.tool_id === toolId) || null;
-}
 function lastRunFor(toolId) {
   return state.runs.find((row) => row.tool_id === toolId) || null;
 }
-function deviceScheduleState(toolId) {
+function deviceAuto() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
-  const rows = agent?.status?.toolSchedule;
-  return Array.isArray(rows) ? (rows.find((row) => row.toolId === toolId) || null) : null;
+  return agent?.status?.auto || null;
 }
 /** "下次大约 HH:MM" —— 用设备上报的下次执行时间（没上报就留空，不猜） */
-function nextRunText(toolId) {
-  const info = deviceScheduleState(toolId);
+function nextRunText() {
+  const info = deviceAuto();
   if (!info?.nextRunAt) return "";
   const when = Date.parse(info.nextRunAt);
   if (!Number.isFinite(when)) return "";
@@ -204,7 +200,7 @@ function renderOverview() {
   const online = agent ? onlineState(agent) : null;
   const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
   set("#toolCount", agent ? (agent.status?.toolCount ?? deviceTools().length) : "—");
-  set("#scheduleCount", agent ? state.schedules.length : "—");
+
   set("#failCount", state.runs.filter((row) => row.status === "failed").length);
   const status = $("#jobStatus");
   const text = $("#jobStatusText");
@@ -228,6 +224,39 @@ function runStatusPill(status) {
 }
 
 /** 工具卡片：每套工具一张，卡片上直接设定时（跟旧版"客户采集工具"一样的位置） */
+/** 顶部自动采集控制条：和旧版一样，一个开关 + 间隔 */
+function renderAutoControls() {
+  const enabled = $("#autoEnabled");
+  const hours = $("#autoHours");
+  const status = $("#autoStatus");
+  const save = $("#saveAuto");
+  if (!enabled || !hours || !status) return;
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  const cloud = agent ? (state.schedules?.auto || null) : null;   // 来自 get_auto 的云端保存值
+  const device = deviceAuto();                                     // 设备实际应用值
+  const hasAgent = Boolean(agent);
+  enabled.disabled = !hasAgent;
+  hours.disabled = !hasAgent;
+  if (save) save.disabled = !hasAgent;
+  if (!hasAgent) { status.textContent = "未选择采集机"; return; }
+
+  const savedOn = cloud?.enabled === true;
+  const savedHours = Number(cloud?.interval_hours || 6);
+  if (document.activeElement !== enabled) enabled.checked = savedOn;
+  if (document.activeElement !== hours) hours.value = String(savedHours);
+
+  const savedVersion = Number(cloud?.config_version || 0);
+  const appliedVersion = Number(cloud?.applied_version || 0);
+  const parts = [];
+  if (!savedVersion) parts.push("云端还没设置过");
+  else if (appliedVersion >= savedVersion) parts.push(`设备已应用 v${appliedVersion}`);
+  else parts.push(`云端已保存 v${savedVersion}，待设备应用`);
+  parts.push(savedOn ? `每 ${savedHours} 小时跑全部工具` : "当前未开启");
+  parts.push("自动采集最近 3 天");
+  parts.push(nextRunText().replace(" · ", ""));
+  status.textContent = parts.filter(Boolean).join(" · ");
+}
+
 function renderTools() {
   const grid = $("#toolGrid");
   if (!grid) return;
@@ -243,17 +272,13 @@ function renderTools() {
     return;
   }
   grid.innerHTML = tools.map((toolId, index) => {
-    const schedule = scheduleFor(toolId);
     const lastRun = lastRunFor(toolId);
     const accent = ACCENTS[index % ACCENTS.length];
-    const saved = Number(schedule?.config_version || 0);
-    const applied = Number(schedule?.applied_version || 0);
-    const synced = saved > 0 && applied >= saved;
-    const statusPill = !schedule ? '<span class="pill off">未配定时</span>'
-      : synced ? `<span class="pill on">已应用 ${esc(schedule.time_of_day || "")}</span>`
-        : `<span class="pill wait">已保存 ${esc(schedule.time_of_day || "")}·待应用</span>`;
     const lastText = !lastRun ? "还没有执行记录"
       : `${esc((lastRun.planned_for || "").replace("T", " ").slice(5, 16))} ${runStatusPill(lastRun.status)}`;
+    const auto = deviceAuto();
+    const on = auto?.enabled === true;
+    const statusPill = on ? '<span class="pill on">自动采集已开</span>' : '<span class="pill off">自动采集未开</span>';
     return `<article class="client-card ${accent}">
       <span class="card-order">${index + 1}</span>
       <div class="client-head">
@@ -265,22 +290,8 @@ function renderTools() {
         ${statusPill}
       </div>
       <div class="tool-last">最近一次：${lastText}</div>
-      <div class="tool-schedule">
-        <label class="schedule-switch">
-          <input type="checkbox" data-tf="enabled" ${schedule?.enabled === false ? "" : "checked"}>
-          <span>自动采集 每</span>
-        </label>
-        <input type="number" data-tf="intervalHours" min="1" max="168" step="1" value="${esc(schedule?.interval_hours || 6)}">
-        <span class="schedule-every">小时</span>
-        <button class="schedule-save" data-tool="${esc(toolId)}">${schedule ? "保存" : "开启"}</button>
-      </div>
-      ${schedule ? `<div class="tool-hint muted small">云端 v${esc(saved)} · 设备已应用 v${esc(applied)}${synced ? "（已生效）" : "（等设备拉取）"}${nextRunText(toolId)}</div>`
-        : '<div class="tool-hint muted small">这个工具还没开启自动采集</div>'}
     </article>`;
   }).join("");
-  grid.querySelectorAll("[data-tool]").forEach((button) => {
-    button.addEventListener("click", () => saveTool(button.closest(".client-card")));
-  });
   renderOverview();
 }
 
@@ -330,9 +341,10 @@ async function loadAgents() {
 }
 
 async function loadSchedules() {
-  if (!state.selectedAgentId) { state.schedules = []; renderTools(); return; }
-  const body = await api("list_schedules", { agentId: state.selectedAgentId });
-  state.schedules = body.schedules || [];
+  if (!state.selectedAgentId) { state.schedules = null; renderAutoControls(); return; }
+  const body = await api("get_auto", { agentId: state.selectedAgentId });
+  state.schedules = { auto: body.auto || null };
+  renderAutoControls();
   renderTools();
 }
 
@@ -343,28 +355,24 @@ async function loadRuns() {
   renderRuns();
 }
 
-/** 保存某个工具的自动采集：间隔必须是 1~168 的整数小时（与旧版同一规则） */
-async function saveTool(card) {
-  const toolId = card.querySelector("[data-tool]").dataset.tool;
-  const pick = (field) => card.querySelector(`[data-tf="${field}"]`);
-  const existing = scheduleFor(toolId);
-  const intervalHours = Number(pick("intervalHours").value);
+/** 保存全局自动采集设置（每 N 小时跑全部工具，与旧版一致） */
+async function saveAuto() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (!agent) { toast("先选一台采集机", "warn"); return; }
+  const intervalHours = Number($("#autoHours").value);
   if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
     toast("自动采集间隔必须是 1 至 168 的整数小时", "warn");
     return;
   }
+  const expectedVersion = Number(state.schedules?.auto?.config_version || 0);
   try {
-    const result = await api("save_schedule", {
+    const result = await api("save_auto", {
       agentId: state.selectedAgentId,
-      expectedVersion: existing ? Number(existing.config_version || 0) : 0,
-      schedule: {
-        toolId,
-        toolName: toolLabel(toolId),
-        enabled: pick("enabled").checked,
-        intervalHours
-      }
+      enabled: $("#autoEnabled").checked,
+      intervalHours,
+      expectedVersion
     });
-    toast(`已保存 ${toolLabel(toolId)}：云端 v${result.configVersion}。等设备下一次心跳（约 20 秒）后会显示「已应用」。`, "ok");
+    toast(`已保存：每 ${intervalHours} 小时跑全部工具（云端 v${result.configVersion}）。等设备下一次心跳后会显示「设备已应用」。`, "ok");
     await loadSchedules();
     await loadAgents();
   } catch (error) {
@@ -404,6 +412,7 @@ function wireEvents() {
   $("#logoutBtn").addEventListener("click", () => { saveSession(null); state.session = null; showLogin(); });
   $("#refreshAgents").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
+  $("#saveAuto").addEventListener("click", saveAuto);
   $("#agentSelect").addEventListener("change", (event) => {
     selectAgent(event.target.value).catch((e) => toast(e.message, "error"));
   });

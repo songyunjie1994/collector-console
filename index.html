@@ -50,9 +50,21 @@
       <select id="agentSelect"></select>
       <span id="agentOnline" class="inline-status"><i></i><span>—</span></span>
     </div>
+    <div class="schedule-control">
+      <div class="schedule-line">
+        <label class="schedule-switch" for="autoEnabled">
+          <input id="autoEnabled" type="checkbox">
+          <span>自动采集</span>
+        </label>
+        <span class="schedule-every">每</span>
+        <input id="autoHours" type="number" min="1" max="168" step="1" value="6" aria-label="自动采集间隔小时">
+        <span class="schedule-every">小时</span>
+        <button id="saveAuto" class="schedule-save">保存</button>
+      </div>
+      <small id="autoStatus">未开启 · 自动采集最近 3 天 · 采集机需保持开机</small>
+    </div>
     <div class="overview">
       <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
-      <div class="overview-item"><span>已配定时</span><strong id="scheduleCount">—</strong></div>
       <div class="overview-item danger"><span>本轮失败</span><strong id="failCount">—</strong></div>
       <div class="job-status" id="jobStatus"><span class="status-light"></span><span id="jobStatusText">等待数据</span></div>
     </div>
