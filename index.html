@@ -79,6 +79,7 @@
       <div><span>CLIENT WORKSPACES</span><h2>采集工具</h2></div>
       <div class="section-actions">
         <p>每套工具的定时计划在这里单独设置；改完等设备确认「已应用」才算生效</p>
+        <button id="addTool" class="primary-action small">＋ 新增工具</button>
         <button id="refreshAgents" class="ghost-button">刷新</button>
         <button id="refreshRuns" class="ghost-button">刷新记录</button>
       </div>
@@ -96,6 +97,21 @@
     </section>
   </main>
 </section>
+
+<!-- 新增采集工具 -->
+<div id="toolModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>新增采集工具</h2>
+    <p class="muted small">指令下发到采集机后由它执行（改的是采集机上的工具清单）。加完需要在那台机器上点一次「打开登录」。</p>
+    <label>工具名称<input id="newToolName" type="text" maxlength="20" placeholder="例如：李杨 tina"></label>
+    <label>采集流程<select id="newToolWorkflow"></select></label>
+    <p id="toolError" class="error small"></p>
+    <div class="modal-actions">
+      <button id="toolCancel" class="ghost-button">取消</button>
+      <button id="toolSave" class="primary-action small">下发指令</button>
+    </div>
+  </div>
+</div>
 
 <!-- 修改密码 -->
 <div id="passwordModal" class="modal hidden">

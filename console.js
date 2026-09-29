@@ -381,6 +381,50 @@ async function saveAuto() {
   }
 }
 
+/** 可用采集流程：优先用设备上报的，保证与采集机上真实存在的流程一致 */
+function deviceWorkflows() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  const rows = agent?.status?.workflows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+function openAddTool() {
+  if (!state.selectedAgentId) { toast("先选一台采集机", "warn"); return; }
+  const workflows = deviceWorkflows();
+  if (!workflows.length) {
+    toast("采集机还没上报可用流程（它可能刚上线或程序没在运行）", "warn");
+    return;
+  }
+  const select = $("#newToolWorkflow");
+  select.innerHTML = workflows.map((row) => `<option value="${esc(row.id)}">${esc(row.name || row.id)}</option>`).join("");
+  $("#newToolName").value = "";
+  $("#toolError").textContent = "";
+  $("#toolModal").classList.remove("hidden");
+  $("#newToolName").focus();
+}
+
+/** 下发"新增工具"指令：真正执行在采集机上，这里只是排一条指令 */
+async function submitAddTool() {
+  const name = $("#newToolName").value.trim();
+  const workflowId = $("#newToolWorkflow").value;
+  const error = $("#toolError");
+  error.textContent = "";
+  if (!name) { error.textContent = "请填写工具名称"; return; }
+  if (!workflowId) { error.textContent = "请选择采集流程"; return; }
+  const button = $("#toolSave");
+  button.disabled = true;
+  try {
+    await api("create_add_tool", { agentId: state.selectedAgentId, name, workflowId });
+    $("#toolModal").classList.add("hidden");
+    toast(`指令已下发：新增「${name}」。采集机大约 20 秒内领到，空闲时执行；成功后这里会出现这个工具。`, "ok");
+    await refreshAll();
+  } catch (e) {
+    error.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function refreshAll() {
   try {
     await loadAgents();
@@ -413,6 +457,9 @@ function wireEvents() {
   $("#refreshAgents").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
   $("#saveAuto").addEventListener("click", saveAuto);
+  $("#addTool").addEventListener("click", openAddTool);
+  $("#toolCancel").addEventListener("click", () => $("#toolModal").classList.add("hidden"));
+  $("#toolSave").addEventListener("click", submitAddTool);
   $("#agentSelect").addEventListener("change", (event) => {
     selectAgent(event.target.value).catch((e) => toast(e.message, "error"));
   });
