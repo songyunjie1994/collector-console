@@ -218,3 +218,37 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 /* 顶栏右侧按钮不要被拉成竖排 */
 .hero-user { flex-direction: row; }
 .hero-user button { padding: 7px 12px; line-height: 1.2; }
+
+/* ---------------- 实时进度 ----------------
+   回答四个问题：现在在采哪个工具、采到第几个、每套工具此刻在做什么、云端任务有没有积压。
+   数据来自采集机每 20 秒一次的心跳上报（clients / job / queue 三个字段）。 */
+.progress-panel { padding: 18px 20px; }
+.progress-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.progress-head strong { font-size: 17px; }
+.progress-head .pill { margin-left: 0; }
+.progress-head .muted { font-size: 12.5px; }
+.progress-bar { position: relative; height: 10px; margin-bottom: 14px; border-radius: 999px; background: #eef0f7; }
+.progress-bar i {
+  display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #7658e8, #39c2d0); transition: width .4s ease;
+}
+.progress-bar span {
+  position: absolute; right: 2px; top: -18px; color: #8991a3; font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.progress-queue { margin-bottom: 14px; color: #6d7688; font-size: 12.5px; }
+.progress-queue b { color: #273149; }
+.progress-queue .pill { margin-left: 6px; }
+.progress-clients { display: grid; gap: 8px; }
+.progress-client {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 13px; border: 1px solid #eef0f6; border-radius: 11px; background: #fafbfe;
+}
+.progress-client .pill { margin-left: 0; }
+.progress-client .pc-name { min-width: 108px; font-size: 13px; font-weight: 700; }
+.progress-client .pc-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tool-live {
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  margin-top: 10px; color: #596277; font-size: 12px;
+}
+.tool-live .pill { margin-left: 0; }

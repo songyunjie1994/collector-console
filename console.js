@@ -53,6 +53,56 @@ function deviceAuto() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   return agent?.status?.auto || null;
 }
+
+// ---------- 采集进度（设备多上报的那几个字段）----------
+// 老版本 Agent 只上报 7 个字段，这些会是空的；页面自动降级，不报错。
+function deviceStatus() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  return agent?.status || null;
+}
+function deviceClients() {
+  const list = deviceStatus()?.clients;
+  return Array.isArray(list) ? list : [];
+}
+function deviceJob() {
+  const job = deviceStatus()?.job;
+  return job && typeof job === "object" ? job : null;
+}
+function deviceQueue() {
+  const queue = deviceStatus()?.queue;
+  return queue && typeof queue === "object" ? queue : null;
+}
+function clientStateOf(toolId) {
+  return deviceClients().find((row) => row.id === toolId) || null;
+}
+/** 工具实时状态 → 中文标签 + 颜色。键与 src/unified-maintenance.js 的 BUSY_STATES 对齐。 */
+const CLIENT_STATE_LABEL = {
+  idle: ["空闲", "wait"],
+  running: ["采集中", "busy"],
+  discovering: ["读取账户", "busy"],
+  saving: ["保存数据", "busy"],
+  exporting: ["导出报表", "busy"],
+  syncing: ["同步云端", "busy"],
+  opening_login: ["打开登录", "wait"],
+  success: ["成功", "on"],
+  partial_success: ["部分成功", "wait"],
+  failed: ["失败", "off"],
+  login_required: ["需登录", "off"],
+  cloud_conflict: ["云端冲突", "off"],
+  error: ["异常", "off"]
+};
+function clientStatePill(row) {
+  const [label, cls] = CLIENT_STATE_LABEL[row?.state] || [row?.state || "—", "wait"];
+  return `<span class="pill ${cls}">${esc(label)}</span>`;
+}
+function elapsedText(startedAt) {
+  const at = Date.parse(startedAt || "");
+  if (!Number.isFinite(at)) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+  if (minutes < 1) return "刚开始";
+  if (minutes < 60) return `已用时 ${minutes} 分钟`;
+  return `已用时 ${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
 /** "下次大约 HH:MM" —— 用设备上报的下次执行时间（没上报就留空，不猜） */
 function nextRunText() {
   const info = deviceAuto();
@@ -73,15 +123,23 @@ function toast(message, kind = "info") {
   setTimeout(() => node.classList.add("hidden"), 4800);
 }
 
+/**
+ * 会话持久化。
+ *
+ * 用 localStorage，**不是 sessionStorage** —— 后者一关标签页就清空，
+ * 那正是"每次打开都要重新输密码"的头号原因。
+ */
 function loadSession() {
-  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
 }
 function saveSession(value) {
-  if (value) sessionStorage.setItem(SESSION_KEY, JSON.stringify(value));
-  else sessionStorage.removeItem(SESSION_KEY);
+  try {
+    if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch { /* 隐私模式下 localStorage 可能不可用，忽略即可 */ }
 }
 
-// ---------------- 登录 ----------------
+// ---------------- 登录 / 令牌续期 ----------------
 
 async function signIn(email, password) {
   const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -98,17 +156,86 @@ async function signIn(email, password) {
     throw new Error(message);
   }
   const body = await response.json();
-  return { accessToken: body.access_token, refreshToken: body.refresh_token, email };
+  return {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token,
+    email,
+    // 记下过期时刻，好在到期前主动续期（服务端默认 1 小时）
+    expiresAt: Date.now() + Number(body.expires_in || 3600) * 1000
+  };
+}
+
+/**
+ * 用 refresh token 换新的访问令牌。
+ *
+ * 以前没有这一步：access token 一过期（默认 1 小时）接口就返回 401，
+ * 于是被踢回登录页 —— 这就是"过一会儿又要重新输密码"的原因。
+ * 服务端若开了 refresh token 轮换，会返回新的 refresh token，必须存下来。
+ */
+let refreshing = null;   // 并发去重：多个请求同时发现过期时只刷新一次
+async function refreshSession() {
+  const session = state.session;
+  if (!session?.refreshToken) return null;
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    try {
+      const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: CONFIG.publishableKey },
+        body: JSON.stringify({ refresh_token: session.refreshToken })
+      });
+      if (!response.ok) return null;
+      const body = await response.json();
+      const next = {
+        accessToken: body.access_token,
+        refreshToken: body.refresh_token || session.refreshToken,
+        email: session.email || body.user?.email || "",
+        expiresAt: Date.now() + Number(body.expires_in || 3600) * 1000
+      };
+      state.session = next;
+      saveSession(next);
+      return next;
+    } catch {
+      return null;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
+/** 快到期就先续期（提前 2 分钟），避免请求打在过期的令牌上 */
+async function ensureFreshToken() {
+  const session = state.session;
+  if (!session?.accessToken) return null;
+  const expiresAt = Number(session.expiresAt || 0);
+  if (!expiresAt) return session;                       // 老会话没记过期时间：等 401 再续
+  if (Date.now() < expiresAt - 120000) return session;  // 还早，不动
+  return (await refreshSession()) || session;
 }
 
 async function api(action, payload = {}) {
   if (!state.session) throw new Error("还没登录");
-  const response = await fetch(CONFIG.apiPath, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${state.session.accessToken}` },
-    body: JSON.stringify({ action, ...payload })
-  });
-  const body = await response.json().catch(() => ({}));
+
+  const call = async (token) => {
+    const response = await fetch(CONFIG.apiPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, ...payload })
+    });
+    const body = await response.json().catch(() => ({}));
+    return { response, body };
+  };
+
+  await ensureFreshToken();
+  let { response, body } = await call(state.session.accessToken);
+
+  // 401 也可能是"令牌恰好在这一刻过期"：先续期重试一次，再决定要不要把用户请回登录页
+  if (response.status === 401) {
+    const renewed = await refreshSession();
+    if (renewed) ({ response, body } = await call(renewed.accessToken));
+  }
+
   if (!response.ok) {
     if (response.status === 401) { saveSession(null); state.session = null; showLogin(); }
     const error = new Error(body.message || body.error || `接口返回 ${response.status}`);
@@ -129,6 +256,7 @@ async function changePassword() {
   const button = $("#passwordSave");
   button.disabled = true;
   try {
+    await ensureFreshToken();   // 改密码也要用没过期的令牌
     const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/user`, {
       method: "PUT",
       headers: {
@@ -166,6 +294,22 @@ function showMain() {
   $("#loginView").classList.add("hidden");
   $("#mainView").classList.remove("hidden");
   $("#whoami").textContent = state.session?.email || "";
+  startAutoRefresh();
+}
+
+/**
+ * 页面开着时每 20 秒自动拉一次（与采集机心跳同频）——"实时进度"要真的实时。
+ * 页面切到后台时跳过，不白占服务端。
+ */
+let autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(() => {
+    if (document.hidden || !state.session || !state.selectedAgentId) return;
+    loadAgents()
+      .then(() => { renderProgress(); renderTools(); })
+      .catch(() => { /* 自动刷新失败静默，手动刷新仍会报错 */ });
+  }, 20000);
 }
 
 function onlineState(agent) {
@@ -257,7 +401,69 @@ function renderAutoControls() {
   status.textContent = parts.filter(Boolean).join(" · ");
 }
 
+/**
+ * 实时进度：正在采哪个工具、第几个、每套工具此刻在做什么、云端任务积压多少。
+ * 这些字段是 Agent 新增上报的（clients / job / queue）；老版本不上报时明确说明，不假装正常。
+ */
+function renderProgress() {
+  const box = $("#progressPanel");
+  if (!box) return;
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (!agent) {
+    box.innerHTML = '<div class="pad muted">还没有采集机接入。</div>';
+    return;
+  }
+  const clients = deviceClients();
+  const job = deviceJob();
+  const queue = deviceQueue();
+
+  if (!clients.length && !job) {
+    box.innerHTML = `<div class="pad muted">
+      这台采集机的程序<b>还没有上报进度明细</b>（当前版本 ${esc(deviceStatus()?.version || "未知")}）。<br>
+      <span class="small">进度明细需要采集机程序 ≥ 1.4.0；旧版本只能看到「在采 / 没在采」。</span>
+    </div>`;
+    return;
+  }
+
+  const rows = clients.length
+    ? clients
+    : deviceTools().map((id) => ({ id, name: toolLabel(id), state: "idle", message: "" }));
+
+  const total = Number(job?.total) || rows.length;
+  const done = Number(job?.done) || 0;
+  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const activeId = job?.activeClientId || null;
+  const activeRow = activeId ? (rows.find((row) => row.id === activeId) || { id: activeId, name: toolLabel(activeId) }) : null;
+  const elapsed = job?.startedAt ? elapsedText(job.startedAt) : "";
+
+  const head = job?.running
+    ? `<div class="progress-head">
+         <span class="pill busy">正在采集</span>
+         <strong>${esc(activeRow?.name || activeRow?.id || "—")}</strong>
+         <span class="muted">第 ${Math.min(done + 1, total)}/${total} 个${elapsed ? ` · ${esc(elapsed)}` : ""}</span>
+       </div>`
+    : `<div class="progress-head"><span class="pill on">空闲</span><span class="muted">当前没有采集任务在跑</span></div>`;
+
+  const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>${done}/${total}</span></div>`;
+
+  const pending = Number(queue?.pending) || 0;
+  const executing = Number(queue?.executing) || 0;
+  const queueLine = queue
+    ? `<div class="progress-queue">云端任务队列：待执行 <b>${pending}</b> · 执行中 <b>${executing}</b> · 待回传 <b>${Number(queue.unreported) || 0}</b>${
+      pending + executing > 1 ? ' <span class="pill wait">有积压</span>' : ""}</div>`
+    : "";
+
+  const list = rows.map((row) => `<div class="progress-client">
+      <span class="pc-name">${esc(row.name || toolLabel(row.id))}</span>
+      ${clientStatePill(row)}
+      <span class="pc-msg muted">${esc(row.message || "")}</span>
+    </div>`).join("");
+
+  box.innerHTML = head + bar + queueLine + `<div class="progress-clients">${list}</div>`;
+}
+
 function renderTools() {
+  renderProgress();
   const grid = $("#toolGrid");
   if (!grid) return;
   const tools = deviceTools();
@@ -273,6 +479,7 @@ function renderTools() {
   }
   grid.innerHTML = tools.map((toolId, index) => {
     const lastRun = lastRunFor(toolId);
+    const live = clientStateOf(toolId);
     const accent = ACCENTS[index % ACCENTS.length];
     const lastText = !lastRun ? "还没有执行记录"
       : `${esc((lastRun.planned_for || "").replace("T", " ").slice(5, 16))} ${runStatusPill(lastRun.status)}`;
@@ -289,6 +496,7 @@ function renderTools() {
         </div>
         ${statusPill}
       </div>
+      <div class="tool-live">当前：${live ? `${clientStatePill(live)} <span class="muted">${esc(live.message || "")}</span>` : '<span class="pill wait">未上报</span>'}</div>
       <div class="tool-last">最近一次：${lastText}</div>
     </article>`;
   }).join("");
@@ -455,6 +663,7 @@ function wireEvents() {
   });
   $("#logoutBtn").addEventListener("click", () => { saveSession(null); state.session = null; showLogin(); });
   $("#refreshAgents").addEventListener("click", refreshAll);
+  $("#refreshProgress").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
   $("#saveAuto").addEventListener("click", saveAuto);
   $("#addTool").addEventListener("click", openAddTool);
@@ -483,10 +692,17 @@ async function boot() {
     await loadRuns();
     showMain();
   } catch (error) {
-    saveSession(null);
-    state.session = null;
-    showLogin();
-    if (error.message) toast(error.message, "error");
+    // 网络抖动不该把人踢下线。只有确实"登录失效"才回登录页，
+    // 其它错误照常进主界面 + 弹提示（以前的写法是任何错误都清会话，太粗暴）。
+    const message = error.message || "";
+    if (/还没登录|invalid_token|missing_token|401/.test(message)) {
+      saveSession(null);
+      state.session = null;
+      showLogin();
+    } else {
+      showMain();
+      toast(message || "加载失败，请稍后重试", "error");
+    }
   }
 }
 

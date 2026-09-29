@@ -21,6 +21,7 @@
       <label>邮箱<input id="email" type="email" autocomplete="username" placeholder="you@example.com"></label>
       <label>密码<input id="password" type="password" autocomplete="current-password"></label>
       <button id="loginBtn" class="primary-action">登录</button>
+      <p class="muted small">登录一次会记住，之后不用再输（换浏览器或清理浏览数据后需要重登）。</p>
       <p id="loginError" class="error"></p>
     </div>
   </div>
@@ -75,6 +76,19 @@
   </div>
 
   <main>
+    <div class="section-heading">
+      <div><span>LIVE PROGRESS</span><h2>实时进度</h2></div>
+      <div class="section-actions">
+        <p id="progressNote">采集机每 20 秒上报一次；本页每 20 秒自动刷新</p>
+        <button id="refreshProgress" class="ghost-button">立即刷新</button>
+      </div>
+    </div>
+    <section class="panel">
+      <div id="progressPanel" class="progress-panel">
+        <div class="pad muted">等待采集机上报…</div>
+      </div>
+    </section>
+
     <div class="section-heading">
       <div><span>CLIENT WORKSPACES</span><h2>采集工具</h2></div>
       <div class="section-actions">
