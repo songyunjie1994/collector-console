@@ -32,7 +32,7 @@
     <div class="hero-text">
       <div class="eyebrow"><span class="pulse-dot"></span> DATA AUTOMATION CENTER · WEB</div>
       <h1>投流数据统一采集中心</h1>
-      <p>一个入口管理多套采集工具：定时在网页上改，采集在采集机上跑，结果自动回传。</p>
+      <p id="heroSub">一个入口管理多套采集工具：定时在网页上改，采集在采集机上跑，结果自动回传。</p>
     </div>
     <div class="hero-side">
       <div class="hero-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -44,11 +44,15 @@
     </div>
   </header>
 
-  <section class="control-bar" aria-label="概览">
+  <section class="control-bar" aria-label="采集控制">
+    <div class="range-control">
+      <label>采集机</label>
+      <select id="agentSelect"></select>
+      <span id="agentOnline" class="inline-status"><i></i><span>—</span></span>
+    </div>
     <div class="overview">
-      <div class="overview-item"><span>采集机</span><strong id="agentCount">—</strong></div>
       <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
-      <div class="overview-item"><span>定时任务</span><strong id="scheduleCount">—</strong></div>
+      <div class="overview-item"><span>已配定时</span><strong id="scheduleCount">—</strong></div>
       <div class="overview-item danger"><span>本轮失败</span><strong id="failCount">—</strong></div>
       <div class="job-status" id="jobStatus"><span class="status-light"></span><span id="jobStatusText">等待数据</span></div>
     </div>
@@ -60,58 +64,22 @@
 
   <main>
     <div class="section-heading">
-      <div><span>CLIENT MACHINES</span><h2>采集机</h2></div>
+      <div><span>CLIENT WORKSPACES</span><h2>采集工具</h2></div>
       <div class="section-actions">
-        <p>点一台机器，在下面配置它的定时任务</p>
+        <p>每套工具的定时计划在这里单独设置；改完等设备确认「已应用」才算生效</p>
         <button id="refreshAgents" class="ghost-button">刷新</button>
+        <button id="refreshRuns" class="ghost-button">刷新记录</button>
       </div>
     </div>
-    <section id="agentList" class="agent-grid" aria-live="polite"></section>
+    <section id="toolGrid" class="client-grid" aria-live="polite"></section>
 
     <div class="section-heading">
-      <div><span>SCHEDULE</span><h2>定时任务</h2></div>
-      <div class="section-actions">
-        <p id="agentTitle">先在左边选一台采集机</p>
-        <button id="addSchedule" class="primary-action small" disabled>＋ 新增</button>
-      </div>
+      <div><span>ACTIVITY</span><h2>运行动态</h2></div>
+      <div class="section-actions"><p>点一条可展开日志；失败会写明原因</p></div>
     </div>
     <section class="panel">
-      <div class="table-wrap">
-        <table id="scheduleTable">
-          <thead>
-            <tr>
-              <th>开启</th><th>工具</th><th>每天几点</th><th>时区</th>
-              <th>允许执行窗口</th><th>错过怎么办</th><th>生效状态</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="scheduleBody">
-            <tr><td colspan="8" class="muted pad">还没有数据</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="panel-hint">
-        「云端已保存」只表示写进云端了；<b>必须等设备下一次心跳拉取后才算真正生效</b>（一般 20 秒内）。
-        设备拉不到时（断网）会继续用本地已生效的那份配置照常跑。
-      </p>
-    </section>
-
-    <div class="section-heading">
-      <div><span>ACTIVITY</span><h2>采集执行记录</h2></div>
-      <div class="section-actions">
-        <p>每条记录都能展开看日志；失败会写明原因</p>
-        <button id="refreshRuns" class="ghost-button">刷新</button>
-      </div>
-    </div>
-    <section class="panel">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>计划时间</th><th>工具</th><th>状态</th><th>怎么触发的</th><th>用了哪版配置</th><th>摘要</th><th>日志</th></tr>
-          </thead>
-          <tbody id="runBody">
-            <tr><td colspan="7" class="muted pad">还没有数据</td></tr>
-          </tbody>
-        </table>
+      <div id="activityList" class="activity-list">
+        <div class="empty-activity">还没有执行记录</div>
       </div>
     </section>
   </main>
