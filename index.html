@@ -4,54 +4,78 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>采集管理台</title>
+<title>投流数据统一采集中心</title>
 <link rel="stylesheet" href="./console.css">
 </head>
 <body>
 <!-- 登录 -->
-<section id="loginView" class="view">
-  <div class="login-card">
-    <h1>采集管理台</h1>
-    <p class="muted">只对管理员开放。登录后能看到采集机在不在线、定时任务改没改生效、最近采集结果。</p>
-    <label>邮箱<input id="email" type="email" autocomplete="username" placeholder="you@example.com"></label>
-    <label>密码<input id="password" type="password" autocomplete="current-password"></label>
-    <button id="loginBtn" class="primary">登录</button>
-    <p id="loginError" class="error"></p>
+<section id="loginView" class="view login-view">
+  <div class="login-shell">
+    <div class="login-brand">
+      <div class="eyebrow"><span class="pulse-dot"></span> WEB CONSOLE</div>
+      <h1>投流数据统一采集中心</h1>
+      <p>网页版：远程看采集机状态、改定时计划、查执行结果。<br>采集本身仍在采集机上运行。</p>
+    </div>
+    <div class="login-card">
+      <h2>管理员登录</h2>
+      <label>邮箱<input id="email" type="email" autocomplete="username" placeholder="you@example.com"></label>
+      <label>密码<input id="password" type="password" autocomplete="current-password"></label>
+      <button id="loginBtn" class="primary-action">登录</button>
+      <p id="loginError" class="error"></p>
+    </div>
   </div>
 </section>
 
 <!-- 主界面 -->
 <section id="mainView" class="view hidden">
-  <header>
-    <h1>采集管理台</h1>
-    <div class="right">
-      <span id="whoami" class="muted"></span>
-      <button id="passwordBtn" class="ghost">修改密码</button>
-      <button id="logoutBtn" class="ghost">退出</button>
+  <header class="hero">
+    <div class="hero-text">
+      <div class="eyebrow"><span class="pulse-dot"></span> DATA AUTOMATION CENTER · WEB</div>
+      <h1>投流数据统一采集中心</h1>
+      <p>一个入口管理多套采集工具：定时在网页上改，采集在采集机上跑，结果自动回传。</p>
+    </div>
+    <div class="hero-side">
+      <div class="hero-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="hero-user">
+        <span id="whoami" class="whoami"></span>
+        <button id="passwordBtn" class="ghost-button">修改密码</button>
+        <button id="logoutBtn" class="ghost-button">退出</button>
+      </div>
     </div>
   </header>
 
-  <div id="banner" class="banner">
+  <section class="control-bar" aria-label="概览">
+    <div class="overview">
+      <div class="overview-item"><span>采集机</span><strong id="agentCount">—</strong></div>
+      <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
+      <div class="overview-item"><span>定时任务</span><strong id="scheduleCount">—</strong></div>
+      <div class="overview-item danger"><span>本轮失败</span><strong id="failCount">—</strong></div>
+      <div class="job-status" id="jobStatus"><span class="status-light"></span><span id="jobStatusText">等待数据</span></div>
+    </div>
+  </section>
+
+  <div id="banner" class="notice">
     采集机必须<b>开机并处于登录状态</b>才会采集。锁屏、注销、重启后没登录，定时任务不会执行。
   </div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="card-head">
-        <h2>采集机</h2>
-        <button id="refreshAgents" class="ghost">刷新</button>
+  <main>
+    <div class="section-heading">
+      <div><span>CLIENT MACHINES</span><h2>采集机</h2></div>
+      <div class="section-actions">
+        <p>点一台机器，在下面配置它的定时任务</p>
+        <button id="refreshAgents" class="ghost-button">刷新</button>
       </div>
-      <div id="agentList" class="list"></div>
     </div>
+    <section id="agentList" class="agent-grid" aria-live="polite"></section>
 
-    <div class="card grow">
-      <div class="card-head">
-        <h2>定时任务</h2>
-        <div class="right">
-          <span id="agentTitle" class="muted">先在左边选一台采集机</span>
-          <button id="addSchedule" class="primary" disabled>新增</button>
-        </div>
+    <div class="section-heading">
+      <div><span>SCHEDULE</span><h2>定时任务</h2></div>
+      <div class="section-actions">
+        <p id="agentTitle">先在左边选一台采集机</p>
+        <button id="addSchedule" class="primary-action small" disabled>＋ 新增</button>
       </div>
+    </div>
+    <section class="panel">
       <div class="table-wrap">
         <table id="scheduleTable">
           <thead>
@@ -65,29 +89,32 @@
           </tbody>
         </table>
       </div>
-      <p class="muted small">
+      <p class="panel-hint">
         「云端已保存」只表示写进云端了；<b>必须等设备下一次心跳拉取后才算真正生效</b>（一般 20 秒内）。
         设备拉不到时（断网）会继续用本地已生效的那份配置照常跑。
       </p>
-    </div>
-  </div>
+    </section>
 
-  <div class="card">
-    <div class="card-head">
-      <h2>最近的采集执行记录</h2>
-      <button id="refreshRuns" class="ghost">刷新</button>
+    <div class="section-heading">
+      <div><span>ACTIVITY</span><h2>采集执行记录</h2></div>
+      <div class="section-actions">
+        <p>每条记录都能展开看日志；失败会写明原因</p>
+        <button id="refreshRuns" class="ghost-button">刷新</button>
+      </div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>计划时间</th><th>工具</th><th>状态</th><th>怎么触发的</th><th>用了哪版配置</th><th>摘要</th><th>日志</th></tr>
-        </thead>
-        <tbody id="runBody">
-          <tr><td colspan="7" class="muted pad">还没有数据</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+    <section class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>计划时间</th><th>工具</th><th>状态</th><th>怎么触发的</th><th>用了哪版配置</th><th>摘要</th><th>日志</th></tr>
+          </thead>
+          <tbody id="runBody">
+            <tr><td colspan="7" class="muted pad">还没有数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
 </section>
 
 <!-- 修改密码 -->
@@ -99,8 +126,8 @@
     <label>再输一次<input id="newPassword2" type="password" autocomplete="new-password"></label>
     <p id="passwordError" class="error small"></p>
     <div class="modal-actions">
-      <button id="passwordCancel" class="ghost">取消</button>
-      <button id="passwordSave" class="primary">保存</button>
+      <button id="passwordCancel" class="ghost-button">取消</button>
+      <button id="passwordSave" class="primary-action small">保存</button>
     </div>
   </div>
 </div>
