@@ -339,6 +339,47 @@ async function saveNewRow() {
   }
 }
 
+/**
+ * 改密码：调 Supabase 的"更新当前用户"接口，带自己的访问令牌。
+ * 只有本人能改自己的密码，服务端校验令牌；页面不碰任何密钥。
+ */
+async function changePassword() {
+  const first = $("#newPassword").value;
+  const second = $("#newPassword2").value;
+  const error = $("#passwordError");
+  error.textContent = "";
+  if (first.length < 8) { error.textContent = "新密码至少 8 位"; return; }
+  if (first !== second) { error.textContent = "两次输入不一致"; return; }
+  const button = $("#passwordSave");
+  button.disabled = true;
+  try {
+    const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/user`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: CONFIG.publishableKey,
+        Authorization: `Bearer ${state.session.accessToken}`
+      },
+      body: JSON.stringify({ password: first })
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.msg || body.error_description || `改密码失败（HTTP ${response.status}）`);
+    }
+    $("#passwordModal").classList.add("hidden");
+    $("#newPassword").value = "";
+    $("#newPassword2").value = "";
+    saveSession(null);
+    state.session = null;
+    showLogin();
+    toast("密码已改，请用新密码重新登录", "ok");
+  } catch (e) {
+    error.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function refreshAll() {
   try {
     await loadAgents();
@@ -373,6 +414,13 @@ function wireEvents() {
     state.adding = true;
     renderSchedules();
   });
+  $("#passwordBtn").addEventListener("click", () => {
+    $("#passwordError").textContent = "";
+    $("#passwordModal").classList.remove("hidden");
+    $("#newPassword").focus();
+  });
+  $("#passwordCancel").addEventListener("click", () => $("#passwordModal").classList.add("hidden"));
+  $("#passwordSave").addEventListener("click", changePassword);
 }
 
 async function boot() {

@@ -77,6 +77,13 @@ pre.log {
   border-radius: 6px; font-size: 12px; max-width: 520px; max-height: 220px; overflow: auto; white-space: pre-wrap;
 }
 
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+.modal-card { background: #fff; border-radius: 10px; padding: 22px; width: 340px; }
+.modal-card h2 { margin-bottom: 6px; }
+.modal-card label { display: block; margin: 12px 0; font-size: 13px; color: var(--muted); }
+.modal-card input { display: block; width: 100%; margin-top: 5px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
 .toast {
   position: fixed; right: 18px; bottom: 18px; max-width: 460px; padding: 11px 15px;
   border-radius: 8px; background: #1c2126; color: #fff; box-shadow: 0 6px 22px rgba(0,0,0,.2);

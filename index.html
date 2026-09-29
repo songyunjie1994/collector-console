@@ -26,6 +26,7 @@
     <h1>采集管理台</h1>
     <div class="right">
       <span id="whoami" class="muted"></span>
+      <button id="passwordBtn" class="ghost">修改密码</button>
       <button id="logoutBtn" class="ghost">退出</button>
     </div>
   </header>
@@ -88,6 +89,21 @@
     </div>
   </div>
 </section>
+
+<!-- 修改密码 -->
+<div id="passwordModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>修改密码</h2>
+    <p class="muted small">改成你自己记得住的密码。改完需要重新登录一次。</p>
+    <label>新密码<input id="newPassword" type="password" autocomplete="new-password" placeholder="至少 8 位"></label>
+    <label>再输一次<input id="newPassword2" type="password" autocomplete="new-password"></label>
+    <p id="passwordError" class="error small"></p>
+    <div class="modal-actions">
+      <button id="passwordCancel" class="ghost">取消</button>
+      <button id="passwordSave" class="primary">保存</button>
+    </div>
+  </div>
+</div>
 
 <div id="toast" class="toast hidden"></div>
 <script src="./console.js"></script>
