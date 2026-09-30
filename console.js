@@ -563,6 +563,70 @@ async function loadRuns() {
   renderRuns();
 }
 
+/** 手动采集：可选区间。`立即采集` = 按填的日期跑一轮；空着 = 最近 3 天 */
+function ymd(date) {
+  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 10);
+}
+
+async function manualRun() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (!agent) { toast("先选一台采集机", "warn"); return; }
+  const start = $("#manualStart").value.trim();
+  const end = $("#manualEnd").value.trim();
+  if ((start && !end) || (!start && end)) { toast("自定义区间要同时填开始和结束日期", "warn"); return; }
+  if (start && end && start > end) { toast("开始日期不能晚于结束日期", "warn"); return; }
+
+  const label = start && end ? `${start} ~ ${end}` : "最近 3 天";
+  if (!window.confirm(`确定按「${label}」手动采集一轮（全部工具，按顺序）？\n\n如果自动采集还开着，建议先关掉它，避免两边抢。`)) return;
+
+  setManualBusy(true, "正在下发…");
+  try {
+    const result = await api("send_command", {
+      agentId: state.selectedAgentId, kind: "run_now", reportStart: start || undefined, reportEnd: end || undefined
+    });
+    toast(result.message || "已下发", "ok");
+    setManualBusy(false, `已下发（${label}）。等当前任务跑完就开始，进度看上面「实时进度」。`);
+    setTimeout(() => { loadProgress().catch(() => {}); }, 25000);
+  } catch (error) {
+    toast(`下发失败：${error.message}`, "error");
+    setManualBusy(false, `下发失败：${error.message}`);
+  }
+}
+
+async function manualStop() {
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (!agent) { toast("先选一台采集机", "warn"); return; }
+  if (!window.confirm("停止本轮采集？\n\n当前正在采的那个工具会跑完（不丢数据），剩下的工具跳过，然后程序退出。")) return;
+  setManualBusy(true, "正在下发…");
+  try {
+    const result = await api("send_command", { agentId: state.selectedAgentId, kind: "stop_collect" });
+    toast(result.message || "已下发", "ok");
+    setManualBusy(false, result.message || "已下发停止请求");
+    setTimeout(() => { loadProgress().catch(() => {}); }, 25000);
+  } catch (error) {
+    toast(`下发失败：${error.message}`, "error");
+    setManualBusy(false, `下发失败：${error.message}`);
+  }
+}
+
+function fillPreset3Days() {
+  const end = new Date();
+  const start = new Date(end.getTime() - 2 * 86400000);
+  $("#manualStart").value = ymd(start);
+  $("#manualEnd").value = ymd(end);
+  setManualBusy(false, `已填入最近 3 天（${ymd(start)} ~ ${ymd(end)}）。点「立即采集」开始。`);
+}
+
+function setManualBusy(busy, text) {
+  for (const id of ["#manualRun", "#manualStop", "#manualPreset3"]) {
+    const node = $(id);
+    if (node) node.disabled = busy;
+  }
+  const status = $("#manualStatus");
+  if (status && text) status.textContent = text;
+}
+
 /** 保存全局自动采集设置（每 N 小时跑全部工具，与旧版一致） */
 async function saveAuto() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
@@ -666,6 +730,11 @@ function wireEvents() {
   $("#refreshProgress").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
   $("#saveAuto").addEventListener("click", saveAuto);
+  $("#manualRun").addEventListener("click", manualRun);
+  $("#manualStop").addEventListener("click", manualStop);
+  $("#manualPreset3").addEventListener("click", fillPreset3Days);
+  // 日期框默认填「最近 3 天」，点开就能直接采；想改区间就改这两个框
+  try { fillPreset3Days(); } catch { /* 老浏览器没有 date 控件也不影响其它功能 */ }
   $("#addTool").addEventListener("click", openAddTool);
   $("#toolCancel").addEventListener("click", () => $("#toolModal").classList.add("hidden"));
   $("#toolSave").addEventListener("click", submitAddTool);

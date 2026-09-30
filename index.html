@@ -64,6 +64,20 @@
       </div>
       <small id="autoStatus">未开启 · 自动采集最近 3 天 · 采集机需保持开机</small>
     </div>
+    <div class="manual-control">
+      <div class="manual-line">
+        <span class="manual-title">手动采集一次</span>
+        <input id="manualStart" type="date" aria-label="开始日期">
+        <span class="schedule-every">至</span>
+        <input id="manualEnd" type="date" aria-label="结束日期">
+      </div>
+      <div class="manual-actions">
+        <button id="manualRun" class="primary-button">立即采集</button>
+        <button id="manualStop" class="ghost-button danger-ghost">停止采集</button>
+        <button id="manualPreset3" class="ghost-button">最近 3 天</button>
+      </div>
+      <small id="manualStatus">填日期 → 立即采集：按你选的区间跑一轮全部工具。想让它安静下来先关掉上面的「自动采集」。</small>
+    </div>
     <div class="overview">
       <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
       <div class="overview-item danger"><span>本轮失败</span><strong id="failCount">—</strong></div>
