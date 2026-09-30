@@ -562,10 +562,11 @@ function renderRuns() {
     // 统计摘要：成功/失败/跳过 + 共同步了多少条（条数要 Agent 上报，没有就不显示）
     const counts = [];
     if (Number.isFinite(summary.ok)) counts.push(`成功 ${summary.ok}`);
+    if (Number.isFinite(summary.partial) && summary.partial > 0) counts.push(`其中部分成功 ${summary.partial}`);
     if (Number.isFinite(summary.failed) && summary.failed > 0) counts.push(`失败 ${summary.failed}`);
     if (Number.isFinite(summary.skipped) && summary.skipped > 0) counts.push(`跳过 ${summary.skipped}`);
     const totals = summary.totals;
-    if (totals && (totals.records || totals.finance)) {
+    if (totals && Number.isFinite(totals.records) && Number.isFinite(totals.finance)) {
       counts.push(`同步消耗 ${totals.records || 0} 条 / 财务 ${totals.finance || 0} 条`);
     }
 
