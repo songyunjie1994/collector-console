@@ -503,7 +503,40 @@ function renderTools() {
   renderOverview();
 }
 
-/** 运行动态：按旧版的列表样式，每条一行，可展开看日志 */
+/** 去掉日志里的 ANSI 转义码：Playwright 的 Call log 会带 [2m / [22m 之类，直接显示很难看 */
+function cleanLogText(text) {
+  return String(text || "")
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\[\d+m/g, "")
+    .replace(/\s+\n/g, "\n")
+    .trim();
+}
+
+/** log_tail 是「工具名：原因；工具名：原因」拼起来的，拆开好按工具对齐 */
+function splitRunReasons(logTail) {
+  const text = cleanLogText(logTail);
+  if (!text) return [];
+  return text.split("；").map((row) => row.trim()).filter(Boolean);
+}
+
+/** 本轮用时（起止都在时才算） */
+function runDurationText(run) {
+  const start = Date.parse(run.started_at || "");
+  const end = Date.parse(run.finished_at || "");
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "";
+  const minutes = Math.max(1, Math.round((end - start) / 60000));
+  return minutes >= 60 ? `用时 ${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分` : `用时 ${minutes} 分钟`;
+}
+
+const TOOL_STATE_META = {
+  success: { icon: "✅", label: "成功" },
+  partial_success: { icon: "⚠️", label: "部分成功" },
+  failed: { icon: "❌", label: "失败" },
+  skipped: { icon: "⏭", label: "已跳过" },
+  no_data: { icon: "➖", label: "无数据" }
+};
+
+/** 运行动态：一条记录 = 一轮；展开能看到**每个工具**的状态与原因，而不是一坨 JSON */
 function renderRuns() {
   const list = $("#activityList");
   if (!list) return;
@@ -513,14 +546,58 @@ function renderRuns() {
     return;
   }
   const trigger = { schedule: "按定时", catchup: "补跑", manual: "手动" };
-  list.innerHTML = state.runs.map((run) => `<div class="activity-item">
-      <span class="activity-time">${esc((run.planned_for || "").replace("T", " ").slice(5, 16))}</span>
-      <span class="activity-tool">${esc(run.tool_name || toolLabel(run.tool_id))}</span>
-      ${runStatusPill(run.status)}
-      <span class="activity-text">${esc(trigger[run.trigger] || run.trigger)} · 配置 v${esc(run.config_version ?? "—")} · ${esc(JSON.stringify(run.summary || {}))}</span>
-      <button class="text-button" data-log="${esc(run.id)}">日志</button>
-      <pre class="log hidden" data-log-body="${esc(run.id)}">${esc(run.log_tail || "（没有日志）")}</pre>
-    </div>`).join("");
+
+  list.innerHTML = state.runs.map((run) => {
+    const summary = run.summary && typeof run.summary === "object" ? run.summary : {};
+    const tools = Array.isArray(summary.tools) ? summary.tools : [];
+    const reasons = splitRunReasons(run.log_tail);
+
+    // 把「工具名：原因」按工具名对上，方便挂在对应那一行
+    const reasonByTool = new Map();
+    for (const row of reasons) {
+      const cut = row.indexOf("：");
+      if (cut > 0) reasonByTool.set(row.slice(0, cut).trim(), row.slice(cut + 1).trim());
+    }
+
+    // 统计摘要：成功/失败/跳过 + 共同步了多少条（条数要 Agent 上报，没有就不显示）
+    const counts = [];
+    if (Number.isFinite(summary.ok)) counts.push(`成功 ${summary.ok}`);
+    if (Number.isFinite(summary.failed) && summary.failed > 0) counts.push(`失败 ${summary.failed}`);
+    if (Number.isFinite(summary.skipped) && summary.skipped > 0) counts.push(`跳过 ${summary.skipped}`);
+    const totals = summary.totals;
+    if (totals && (totals.records || totals.finance)) {
+      counts.push(`同步消耗 ${totals.records || 0} 条 / 财务 ${totals.finance || 0} 条`);
+    }
+
+    const detail = tools.length
+      ? tools.map((tool) => {
+        const meta = TOOL_STATE_META[tool.status] || { icon: "•", label: tool.status || "未知" };
+        const text = tool.message
+          || reasonByTool.get(tool.name)
+          || (tool.status === "skipped" ? "已按请求停止，跳过该工具" : "");
+        return `<div class="run-tool">
+            <span class="rt-icon">${meta.icon}</span>
+            <span class="rt-name">${esc(tool.name || tool.id || "")}</span>
+            <span class="rt-state st-${esc(tool.status || "unknown")}">${esc(meta.label)}</span>
+            <span class="rt-detail">${esc(text)}</span>
+          </div>`;
+      }).join("")
+      : `<div class="run-tool"><span class="rt-icon">•</span><span class="rt-detail">${esc(reasons[0] || "（没有逐工具明细）")}</span></div>`;
+
+    const fullLog = cleanLogText(run.log_tail) || "（没有日志）";
+    return `<div class="activity-item">
+      <div class="activity-head">
+        <span class="activity-time">${esc((run.planned_for || "").replace("T", " ").slice(5, 16))}</span>
+        <span class="activity-tool">${esc(run.tool_name || toolLabel(run.tool_id))}</span>
+        ${runStatusPill(run.status)}
+        <span class="activity-text">${esc(trigger[run.trigger] || run.trigger || "")}${runDurationText(run) ? " · " + esc(runDurationText(run)) : ""}${counts.length ? " · " + esc(counts.join(" · ")) : ""}</span>
+        <button class="text-button" data-log="${esc(run.id)}">日志</button>
+      </div>
+      <div class="run-tools">${detail}</div>
+      <pre class="log hidden" data-log-body="${esc(run.id)}">${esc(fullLog)}</pre>
+    </div>`;
+  }).join("");
+
   list.querySelectorAll("[data-log]").forEach((button) => {
     button.addEventListener("click", () => {
       const node = list.querySelector(`[data-log-body="${CSS.escape(button.dataset.log)}"]`);

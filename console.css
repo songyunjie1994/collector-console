@@ -284,3 +284,26 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 @media (max-width: 1180px) {
   .manual-control { padding-left: 0; border-left: 0; border-top: 1px solid #e7e9f0; padding-top: 12px; width: 100%; min-width: 0; }
 }
+/* ---------- 运行动态：每条记录展开后是"每个工具一行" ----------
+   以前这里直接把 summary 的 JSON 贴出来，看的人一头雾水
+   （{"ok":2,"tools":[{"id":"liyang-tina"...）。现在按工具拆行 + 状态图标 + 失败原因。 */
+.activity-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.run-tools { margin: 8px 0 0 2px; display: flex; flex-direction: column; gap: 4px; }
+.run-tool { display: flex; align-items: baseline; gap: 8px; font-size: 12px; line-height: 1.5; }
+.rt-icon { flex: 0 0 16px; text-align: center; font-size: 11px; }
+.rt-name { flex: 0 0 96px; color: #3c4557; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-state { flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+.rt-state.st-success { color: #1c7a4a; background: #e8f7ef; }
+.rt-state.st-partial_success { color: #9a6a12; background: #fdf5e3; }
+.rt-state.st-failed { color: #b23b3b; background: #fdecec; }
+.rt-state.st-skipped { color: #6b7280; background: #f1f2f6; }
+.rt-state.st-no_data { color: #6b7280; background: #f1f2f6; }
+.rt-detail { flex: 1; min-width: 0; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-tool:hover .rt-detail { white-space: normal; overflow: visible; }
+.log { max-height: 320px; overflow: auto; }
+
+/* 覆盖：原来是 display:flex 把时间/工具/摘要挤成一行（那时只有一行内容）。
+   现在每条记录是"标题行 + 每个工具一行 + 可展开日志"，所以外层改成块级，
+   由 .activity-head 自己当那一行。 */
+.activity-item { display: block; }
+.activity-item .activity-head .activity-text { flex: 1 1 240px; }
