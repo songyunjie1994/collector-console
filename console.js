@@ -332,10 +332,20 @@ function renderAgents() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (online && agent) {
     const s = onlineState(agent);
-    online.querySelector("span").textContent = s.label;
+    online.querySelector("span").textContent = `${s.label} · ${controlState(agent)}`;
     online.className = `inline-status ${s.cls}`;
   }
   renderOverview();
+}
+
+function controlState(agent) {
+  if (onlineState(agent).cls === "off") return "远程控制不可用，当前显示为最后快照";
+  const control = agent.status?.control;
+  if (!control?.task || !control?.guard) return "独立守护尚未验证";
+  const checked = Date.parse(control.guard.checkedAt || "");
+  if (!Number.isFinite(checked) || Date.now() - checked > 180000) return "独立守护巡检过期";
+  if (control.guard.action === "blocked" || /invalid-code|legacy-agent/.test(control.guard.reason || "")) return "远程已连接，守护需修复";
+  return "远程已连接 · 独立守护正常";
 }
 
 /** 顶部概览：跟旧版一样，一眼看到总数、失败数与当前状态 */
@@ -349,8 +359,8 @@ function renderOverview() {
   const status = $("#jobStatus");
   const text = $("#jobStatusText");
   if (status && text) {
-    const busy = Boolean(agent?.status?.jobRunning) || Boolean(agent?.status?.draining);
-    status.classList.toggle("active", Boolean(agent) && !busy);
+    const busy = online?.cls !== "off" && (Boolean(agent?.status?.jobRunning) || Boolean(agent?.status?.draining));
+    status.classList.toggle("active", Boolean(agent) && online?.cls !== "off" && !busy);
     status.classList.toggle("busy", Boolean(busy));
     text.textContent = !agent ? "等待数据"
       : busy ? (agent.status?.draining ? "正在收尾（等采集跑完）" : "正在采集")
@@ -411,6 +421,10 @@ function renderProgress() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (!agent) {
     box.innerHTML = '<div class="pad muted">还没有采集机接入。</div>';
+    return;
+  }
+  if (onlineState(agent).cls === "off") {
+    box.innerHTML = `<div class="pad muted">远程控制通道已断开。最后心跳：${esc(agent.last_seen_at || "从未上线")}。<br>采集状态为历史快照，不能据此判断当前是否正常；恢复连接后自动刷新。</div>`;
     return;
   }
   const clients = deviceClients();
