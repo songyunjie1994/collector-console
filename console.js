@@ -117,16 +117,22 @@ function elapsedText(startedAt) {
   if (minutes < 60) return `已用时 ${minutes} 分钟`;
   return `已用时 ${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
-/** "下次大约 HH:MM" —— 用设备上报的下次执行时间（没上报就留空，不猜） */
+/** 只显示设备实际调度，不推算正在运行任务的完成时间。 */
 function nextRunText() {
   const info = deviceAuto();
-  if (!info?.nextRunAt) return "";
+  if (!info) return "下次自动采集：等待设备上报";
+  if (info.enabled === false) return "下次自动采集：未开启";
+  if (deviceStatus()?.job?.running) {
+    const hours = Number(info.intervalHours);
+    return `本轮正在采集；${hours > 0 ? `结束后间隔 ${hours} 小时再采` : "下次时间等待设备上报"}`;
+  }
+  if (!info.nextRunAt) return "下次自动采集：等待设备上报";
   const when = Date.parse(info.nextRunAt);
-  if (!Number.isFinite(when)) return "";
+  if (!Number.isFinite(when)) return "下次自动采集：设备上报时间无效";
   const deltaMin = Math.round((when - Date.now()) / 60000);
-  const clock = new Date(when).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const clock = displayTime(info.nextRunAt);
   const rel = deltaMin <= 0 ? "（已到点，等采集空闲）" : deltaMin < 60 ? `（约 ${deltaMin} 分钟后）` : `（约 ${Math.round(deltaMin / 60)} 小时后）`;
-  return ` · 下次 ${clock}${rel}`;
+  return `下次自动采集：${clock}（北京时间）${rel}`;
 }
 
 function toast(message, kind = "info") {
@@ -406,12 +412,27 @@ function renderAutoControls() {
   enabled.disabled = !hasAgent;
   hours.disabled = !hasAgent;
   if (save) save.disabled = !hasAgent;
-  if (!hasAgent) { status.textContent = "未选择采集机"; return; }
+  if (!hasAgent) { renderAutoStatus(); return; }
 
   const savedOn = cloud?.enabled === true;
   const savedHours = Number(cloud?.interval_hours || 6);
   if (document.activeElement !== enabled) enabled.checked = savedOn;
   if (document.activeElement !== hours) hours.value = String(savedHours);
+
+  renderAutoStatus();
+}
+
+// 心跳刷新只更新只读状态，不覆盖尚未保存的间隔或开关。
+function renderAutoStatus() {
+  const status = $("#autoStatus");
+  const next = $("#nextAutoRun");
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (next) next.textContent = agent ? nextRunText() : "下次自动采集：未选择采集机";
+  if (!status) return;
+  if (!agent) { status.textContent = "未选择采集机"; return; }
+  const cloud = state.schedules?.auto;
+  const savedOn = cloud?.enabled === true;
+  const savedHours = Number(cloud?.interval_hours || 6);
 
   const savedVersion = Number(cloud?.config_version || 0);
   const appliedVersion = Number(cloud?.applied_version || 0);
@@ -421,7 +442,6 @@ function renderAutoControls() {
   else parts.push(`云端已保存 v${savedVersion}，待设备应用`);
   parts.push(savedOn ? `每 ${savedHours} 小时跑全部工具` : "当前未开启");
   parts.push("自动采集最近 3 天");
-  parts.push(nextRunText().replace(" · ", ""));
   status.textContent = parts.filter(Boolean).join(" · ");
 }
 
@@ -705,6 +725,7 @@ function loadProgress() {
       renderAgents();
       renderRuns();
       renderTools();
+      renderAutoStatus();
     } catch (error) {
       if (state.sessionEpoch === sessionEpoch && state.selectedAgentId === selected) {
         state.progressError = error.message || "网络请求失败";
