@@ -122,7 +122,7 @@ function nextRunText() {
   const info = deviceAuto();
   if (!info) return "下次自动采集：等待设备上报";
   if (info.enabled === false) return "下次自动采集：未开启";
-  if (deviceStatus()?.job?.running) {
+  if (deviceStatus()?.job?.running && deviceStatus().job.mode === "scheduled") {
     const hours = Number(info.intervalHours);
     return `本轮正在采集；${hours > 0 ? `结束后间隔 ${hours} 小时再采` : "下次时间等待设备上报"}`;
   }
