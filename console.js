@@ -20,7 +20,7 @@ const CONFIG = Object.freeze({
 });
 
 const SESSION_KEY = "qca-console-session";
-const state = { session: null, agents: [], selectedAgentId: null, auto: null, runs: [] };
+const state = { session: null, sessionEpoch: 0, agents: [], selectedAgentId: null, auto: null, runs: [], progressUpdatedAt: null, progressError: null };
 
 // 工具显示名：优先用设备上报的名字，没有就用这张表兜底；表里没有就直接显示 id。
 const TOOL_NAMES = {
@@ -47,7 +47,20 @@ function deviceTools() {
   return Array.isArray(tools) ? tools : [];
 }
 function lastRunFor(toolId) {
-  return state.runs.find((row) => row.tool_id === toolId) || null;
+  const matches = state.runs.flatMap((row) => {
+    if (row.tool_id === toolId) return [row];
+    if (row.tool_id !== "*") return [];
+    const tool = Array.isArray(row.summary?.tools) ? row.summary.tools.find((item) => item?.id === toolId) : null;
+    return tool ? [{ ...row, tool_id: toolId, status: tool.status, toolResult: tool }] : [];
+  });
+  const time = (row) => Date.parse(row.finished_at || row.started_at || row.planned_for || "") || 0;
+  return matches.sort((a, b) => time(b) - time(a))[0] || null;
+}
+function displayTime(value) {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) ? new Date(time).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }) : "未知";
 }
 function deviceAuto() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
@@ -87,6 +100,7 @@ const CLIENT_STATE_LABEL = {
   success: ["成功", "on"],
   partial_success: ["部分成功", "wait"],
   failed: ["失败", "off"],
+  step_failed: ["步骤失败", "off"],
   login_required: ["需登录", "off"],
   cloud_conflict: ["云端冲突", "off"],
   error: ["异常", "off"]
@@ -133,6 +147,7 @@ function loadSession() {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
 }
 function saveSession(value) {
+  if (!value) state.sessionEpoch += 1;
   try {
     if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
     else localStorage.removeItem(SESSION_KEY);
@@ -306,9 +321,7 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = setInterval(() => {
     if (document.hidden || !state.session || !state.selectedAgentId) return;
-    loadAgents()
-      .then(() => { renderProgress(); renderTools(); })
-      .catch(() => { /* 自动刷新失败静默，手动刷新仍会报错 */ });
+    loadProgress().catch(() => { /* loadProgress 已明确显示刷新失败，不隐瞒旧快照 */ });
   }, 20000);
 }
 
@@ -355,7 +368,8 @@ function renderOverview() {
   const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
   set("#toolCount", agent ? (agent.status?.toolCount ?? deviceTools().length) : "—");
 
-  set("#failCount", state.runs.filter((row) => row.status === "failed").length);
+  const outcomes = deviceJob()?.results;
+  set("#failCount", Array.isArray(outcomes) ? outcomes.filter((row) => row.status === "failed").length : "—");
   const status = $("#jobStatus");
   const text = $("#jobStatusText");
   if (status && text) {
@@ -370,7 +384,7 @@ function renderOverview() {
 
 function runStatusPill(status) {
   const map = {
-    success: ["成功", "on"], partial: ["部分成功", "wait"], failed: ["失败", "off"],
+    success: ["成功", "on"], partial: ["部分成功", "wait"], partial_success: ["部分成功", "wait"], failed: ["失败", "off"],
     skipped: ["已跳过", "wait"], running: ["执行中", "busy"]
   };
   const [label, cls] = map[status] || [status || "—", "wait"];
@@ -449,6 +463,9 @@ function renderProgress() {
   const activeId = job?.activeClientId || null;
   const activeRow = activeId ? (rows.find((row) => row.id === activeId) || { id: activeId, name: toolLabel(activeId) }) : null;
   const elapsed = job?.startedAt ? elapsedText(job.startedAt) : "";
+  const results = Array.isArray(job?.results) ? job.results : [];
+  const count = (status) => results.filter((row) => row.status === status).length;
+  const outcomes = `成功 ${count("success")} · 部分成功 ${count("partial_success")} · 失败 ${count("failed")} · 跳过 ${count("skipped")}`;
 
   const head = job?.running
     ? `<div class="progress-head">
@@ -456,9 +473,12 @@ function renderProgress() {
          <strong>${esc(activeRow?.name || activeRow?.id || "—")}</strong>
          <span class="muted">第 ${Math.min(done + 1, total)}/${total} 个${elapsed ? ` · ${esc(elapsed)}` : ""}</span>
        </div>`
-    : `<div class="progress-head"><span class="pill on">空闲</span><span class="muted">当前没有采集任务在跑</span></div>`;
+    : `<div class="progress-head"><span class="pill ${count("failed") ? "wait" : "on"}">空闲</span><span class="muted">当前没有采集任务在跑${results.length ? ` · 上轮已结束（${esc(outcomes)}）` : ""}</span></div>`;
 
-  const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>${done}/${total}</span></div>`;
+  const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>已处理 ${done}/${total}（不是成功率）</span></div>`;
+  const freshness = `<div class="progress-queue">设备心跳：${esc(displayTime(agent.last_seen_at))} · 网页刷新：${esc(displayTime(state.progressUpdatedAt))}${
+    state.progressError ? ` · <span class="pill off">刷新失败，当前显示旧快照：${esc(state.progressError)}</span>` : ""
+  }${job?.running && results.length ? `<br>本轮已处理结果：${esc(outcomes)}` : ""}</div>`;
 
   const pending = Number(queue?.pending) || 0;
   const executing = Number(queue?.executing) || 0;
@@ -473,7 +493,7 @@ function renderProgress() {
       <span class="pc-msg muted">${esc(row.message || "")}</span>
     </div>`).join("");
 
-  box.innerHTML = head + bar + queueLine + `<div class="progress-clients">${list}</div>`;
+  box.innerHTML = head + bar + freshness + queueLine + `<div class="progress-clients">${list}</div>`;
 }
 
 function renderTools() {
@@ -496,7 +516,7 @@ function renderTools() {
     const live = clientStateOf(toolId);
     const accent = ACCENTS[index % ACCENTS.length];
     const lastText = !lastRun ? "还没有执行记录"
-      : `${esc((lastRun.planned_for || "").replace("T", " ").slice(5, 16))} ${runStatusPill(lastRun.status)}`;
+      : `${lastRun.finished_at ? "完成" : "启动"} ${esc(displayTime(lastRun.finished_at || lastRun.started_at || lastRun.planned_for))} ${runStatusPill(lastRun.status)}`;
     const auto = deviceAuto();
     const on = auto?.enabled === true;
     const statusPill = on ? '<span class="pill on">自动采集已开</span>' : '<span class="pill off">自动采集未开</span>';
@@ -602,7 +622,7 @@ function renderRuns() {
     const fullLog = cleanLogText(run.log_tail) || "（没有日志）";
     return `<div class="activity-item">
       <div class="activity-head">
-        <span class="activity-time">${esc((run.planned_for || "").replace("T", " ").slice(5, 16))}</span>
+        <span class="activity-time">${esc(displayTime(run.started_at || run.planned_for))}</span>
         <span class="activity-tool">${esc(run.tool_name || toolLabel(run.tool_id))}</span>
         ${runStatusPill(run.status)}
         <span class="activity-text">${esc(trigger[run.trigger] || run.trigger || "")}${runDurationText(run) ? " · " + esc(runDurationText(run)) : ""}${counts.length ? " · " + esc(counts.join(" · ")) : ""}</span>
@@ -626,7 +646,11 @@ function renderRuns() {
 
 async function selectAgent(agentId) {
   state.selectedAgentId = agentId;
+  state.runs = [];
+  state.progressUpdatedAt = null;
+  state.progressError = null;
   renderAgents();
+  renderTools();
   await Promise.all([loadSchedules(), loadRuns()]);
 }
 
@@ -650,9 +674,48 @@ async function loadSchedules() {
 
 async function loadRuns() {
   if (!state.selectedAgentId) { state.runs = []; renderRuns(); return; }
-  const body = await api("list_runs", { agentId: state.selectedAgentId, limit: 50 });
+  const agentId = state.selectedAgentId;
+  const sessionEpoch = state.sessionEpoch;
+  const body = await api("list_runs", { agentId, limit: 50 });
+  if (state.selectedAgentId !== agentId || state.sessionEpoch !== sessionEpoch) return;
   state.runs = body.runs || [];
   renderRuns();
+  renderTools();
+}
+
+// 一次刷新同时读设备心跳和运行记录；不碰表单、调度或采集命令。
+let progressRefresh = null;
+function loadProgress() {
+  if (progressRefresh) return progressRefresh;
+  const selected = state.selectedAgentId;
+  const sessionEpoch = state.sessionEpoch;
+  progressRefresh = (async () => {
+    try {
+      const devices = await api("list_agents");
+      if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
+      const agents = devices.agents || [];
+      const agentId = agents.some((row) => row.id === selected) ? selected : (agents[0]?.id || null);
+      const history = agentId ? await api("list_runs", { agentId, limit: 50 }) : { runs: [] };
+      if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
+      state.agents = agents;
+      state.selectedAgentId = agentId;
+      state.runs = history.runs || [];
+      state.progressUpdatedAt = new Date().toISOString();
+      state.progressError = null;
+      renderAgents();
+      renderRuns();
+      renderTools();
+    } catch (error) {
+      if (state.sessionEpoch === sessionEpoch && state.selectedAgentId === selected) {
+        state.progressError = error.message || "网络请求失败";
+        renderProgress();
+      }
+      throw error;
+    } finally {
+      progressRefresh = null;
+    }
+  })();
+  return progressRefresh;
 }
 
 /** 手动采集：可选区间。`立即采集` = 按填的日期跑一轮；空着 = 最近 3 天 */
@@ -791,20 +854,24 @@ async function submitAddTool() {
 
 async function refreshAll() {
   try {
-    await loadAgents();
-    if (state.selectedAgentId) { await loadSchedules(); await loadRuns(); }
+    await loadProgress();
+    if (state.selectedAgentId) await loadSchedules();
   } catch (error) {
     toast(error.message, "error");
   }
 }
 
 function wireEvents() {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.session) loadProgress().catch(() => {});
+  });
   $("#loginBtn").addEventListener("click", async () => {
     const button = $("#loginBtn");
     button.disabled = true;
     $("#loginError").textContent = "";
     try {
       const session = await signIn($("#email").value.trim(), $("#password").value);
+      state.sessionEpoch += 1;
       state.session = session;
       saveSession(session);
       await loadAgents();
