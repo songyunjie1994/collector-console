@@ -378,8 +378,9 @@ function renderOverview() {
   const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
   set("#toolCount", agent ? (agent.status?.toolCount ?? deviceTools().length) : "—");
 
-  const outcomes = deviceJob()?.results;
-  set("#failCount", Array.isArray(outcomes) ? outcomes.filter((row) => row.status === "failed").length : "—");
+  const job = deviceJob();
+  const outcomes = job?.results;
+  set("#failCount", Array.isArray(outcomes) ? outcomes.filter((row) => jobOutcomeStatus(job, row) === "failed").length : "—");
   const status = $("#jobStatus");
   const text = $("#jobStatusText");
   if (status && text) {
@@ -390,6 +391,14 @@ function renderOverview() {
       : busy ? (agent.status?.draining ? "正在收尾（等采集跑完）" : "正在采集")
         : online.cls === "off" ? "采集机离线" : "当前空闲";
   }
+}
+
+function jobOutcomeStatus(job, row) {
+  // Only the explicit stale-report protection in upload-only recovery is not
+  // a collection failure. Preserve all other failures and the original ledger.
+  return job?.mode === "sync-recovery" && row?.status === "failed"
+    && (row.errorCode === "sync_superseded" || row.error === "云端已有此账户日期范围的更新采集，旧报表已保留，未覆盖新数据")
+    ? "protected" : row?.status;
 }
 
 function runStatusPill(status) {
@@ -488,8 +497,8 @@ function renderProgress() {
   const activeRow = activeId ? (rows.find((row) => row.id === activeId) || { id: activeId, name: toolLabel(activeId) }) : null;
   const elapsed = job?.startedAt ? elapsedText(job.startedAt) : "";
   const results = Array.isArray(job?.results) ? job.results : [];
-  const count = (status) => results.filter((row) => row.status === status).length;
-  const outcomes = `成功 ${count("success")} · 部分成功 ${count("partial_success")} · 失败 ${count("failed")} · 跳过 ${count("skipped")}`;
+  const count = (status) => results.filter((row) => jobOutcomeStatus(job, row) === status).length;
+  const outcomes = `成功 ${count("success")} · 部分成功 ${count("partial_success")} · 失败 ${count("failed")} · 跳过 ${count("skipped")}${count("protected") ? ` · 旧回传保护 ${count("protected")}` : ""}`;
 
   const head = job?.running
     ? `<div class="progress-head">
@@ -497,7 +506,7 @@ function renderProgress() {
          <strong>${esc(activeRow?.name || activeRow?.id || "—")}</strong>
          <span class="muted">第 ${Math.min(done + 1, total)}/${total} 个${elapsed ? ` · ${esc(elapsed)}` : ""}</span>
        </div>`
-    : `<div class="progress-head"><span class="pill ${count("failed") ? "wait" : "on"}">空闲</span><span class="muted">当前没有采集任务在跑${results.length ? ` · 上轮已结束（${esc(outcomes)}）` : ""}</span></div>`;
+    : `<div class="progress-head"><span class="pill ${count("failed") ? "wait" : "on"}">空闲</span><span class="muted">当前没有采集任务在跑${results.length ? ` · ${job?.mode === "sync-recovery" ? "上次回传恢复已结束" : "上轮已结束"}（${esc(outcomes)}）` : ""}</span></div>`;
 
   const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>已处理 ${done}/${total}（不是成功率）</span></div>`;
   const freshness = `<div class="progress-queue">设备心跳：${esc(displayTime(agent.last_seen_at))} · 网页刷新：${esc(displayTime(state.progressUpdatedAt))}${
