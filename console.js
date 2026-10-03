@@ -96,6 +96,10 @@ const CLIENT_STATE_LABEL = {
   saving: ["保存数据", "busy"],
   exporting: ["导出报表", "busy"],
   syncing: ["同步云端", "busy"],
+  sync_pending: ["采完·回传待重试", "wait"],
+  sync_superseded: ["旧回传已阻止", "wait"],
+  cloud_sync_network: ["回传网络失败", "off"],
+  cloud_sync_http: ["回传接口失败", "off"],
   opening_login: ["打开登录", "wait"],
   success: ["成功", "on"],
   partial_success: ["部分成功", "wait"],
@@ -551,6 +555,7 @@ function renderTools() {
         ${statusPill}
       </div>
       <div class="tool-live">当前：${live ? `${clientStatePill(live)} <span class="muted">${esc(live.message || "")}</span>` : '<span class="pill wait">未上报</span>'}</div>
+      ${live?.syncRecovery ? `<div class="tool-sync muted">回传待重试 ${esc(live.syncRecovery.pending)}；需核验 ${esc(live.syncRecovery.blocked)}${live.syncRecovery.nextAttemptAt ? `；下次回传重试 ${esc(displayTime(live.syncRecovery.nextAttemptAt))}` : ""}${live.syncRecovery.lastVerifiedAt ? `；最近回传核验 ${esc(displayTime(live.syncRecovery.lastVerifiedAt))}` : ""}</div>` : ""}
       <div class="tool-last">最近一次：${lastText}</div>
     </article>`;
   }).join("");
