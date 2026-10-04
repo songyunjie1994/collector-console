@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>投流数据统一采集中心</title>
-<link rel="stylesheet" href="./console.css">
+  <link rel="stylesheet" href="./console.css?v=20261004-manual-auto-controls-1">
 </head>
 <body>
 <!-- 登录 -->
@@ -53,14 +53,13 @@
     </div>
     <div class="schedule-control">
       <div class="schedule-line">
-        <label class="schedule-switch" for="autoEnabled">
-          <input id="autoEnabled" type="checkbox">
-          <span>自动采集</span>
-        </label>
+        <span class="schedule-switch">自动采集</span>
         <span class="schedule-every">每</span>
         <input id="autoHours" type="number" min="1" max="168" step="1" value="6" aria-label="自动采集间隔小时">
         <span class="schedule-every">小时</span>
-        <button id="saveAuto" class="schedule-save">保存</button>
+        <button id="saveAuto" class="schedule-save">保存间隔</button>
+        <button id="startAuto" class="schedule-save">开始自动采集</button>
+        <button id="stopAuto" class="schedule-save danger-ghost">停止自动采集</button>
       </div>
       <small id="autoStatus">未开启 · 自动采集最近 3 天 · 采集机需保持开机</small>
       <div id="nextAutoRun" role="status" style="margin-top:6px;font-size:12px;font-weight:700;color:#654bc8">下次自动采集：等待设备上报</div>
@@ -77,7 +76,7 @@
         <button id="manualStop" class="ghost-button danger-ghost">停止采集</button>
         <button id="manualPreset3" class="ghost-button">最近 3 天</button>
       </div>
-      <small id="manualStatus">填日期 → 立即采集：按你选的区间跑一轮全部工具。想让它安静下来先关掉上面的「自动采集」。</small>
+      <small id="manualStatus" role="status" aria-live="polite">点「立即采集」会自动关闭定时采集，再按所选区间采集；结束后不会自动恢复定时。</small>
     </div>
     <div class="overview">
       <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
@@ -158,6 +157,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="./console.js?v=20261003-sync-recovery-2"></script>
+<script src="./console.js?v=20261004-manual-auto-controls-1"></script>
 </body>
 </html>

@@ -205,7 +205,7 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 .range-control { flex: 0 1 auto; min-width: 300px; }
 .range-control label { white-space: nowrap; }
 .schedule-control { flex: 0 0 auto; min-width: 300px; padding-left: 18px; border-left: 1px solid #e7e9f0; }
-.schedule-line { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; }
+.schedule-line { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .schedule-switch { display: flex; align-items: center; gap: 6px; color: #525c72; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .schedule-switch input { width: 16px; height: 16px; accent-color: #6b4ed5; }
 .schedule-every { color: #8a91a2; font-size: 11px; white-space: nowrap; }
@@ -213,6 +213,7 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 .schedule-save { height: 34px; padding: 0 12px; border: 1px solid #d8dcef; border-radius: 8px; color: #654bc8; background: #f4f1ff; font-size: 11px; font-weight: 800; }
 .schedule-save:hover:not(:disabled) { border-color: #7658e8; }
 .schedule-save:disabled { opacity: .5; cursor: not-allowed; }
+.schedule-control .danger-ghost { color: #c0392b; border-color: #f0d5d5; background: #fdf3f3; }
 .schedule-control small { display: block; margin-top: 5px; color: #979eae; font-size: 10px; max-width: 520px; }
 .overview { flex: 0 0 auto; }
 /* 顶栏右侧按钮不要被拉成竖排 */
@@ -279,10 +280,29 @@ pre.log { flex: 1 1 100%; margin: 6px 0 0; padding: 10px; background: #f7f8fc; b
 .manual-actions .danger-ghost { border-color: #f0d5d5; color: #c0392b; background: #fdf3f3; }
 .manual-actions .danger-ghost:hover:not(:disabled) { border-color: #e08a8a; }
 .manual-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.manual-actions #manualRun[aria-disabled="true"] { opacity: 1; cursor: progress; }
 .manual-control small { display: block; margin-top: 5px; color: #979eae; font-size: 10px; max-width: 520px; }
 
 @media (max-width: 1180px) {
   .manual-control { padding-left: 0; border-left: 0; border-top: 1px solid #e7e9f0; padding-top: 12px; width: 100%; min-width: 0; }
+}
+@media (max-width: 600px) {
+  .hero { padding: 24px 20px 46px; flex-direction: column; align-items: flex-start; }
+  .hero h1 { font-size: 26px; }
+  .hero-side { align-items: flex-start; max-width: 100%; }
+  .hero-mark { display: none; }
+  .hero-user { flex-wrap: wrap; }
+  .control-bar { width: calc(100% - 24px); padding: 14px; gap: 14px; }
+  .range-control { width: 100%; min-width: 0; flex-wrap: wrap; }
+  .range-control select { min-width: 0; max-width: 100%; flex: 1; }
+  .schedule-control { width: 100%; min-width: 0; padding-left: 0; border-left: 0; }
+  .manual-line, .manual-actions { flex-wrap: wrap; }
+  .manual-title { flex-basis: 100%; }
+  .overview { width: 100%; }
+  .overview-item { min-width: 70px; margin-right: 14px; padding-right: 14px; }
+  .section-heading { flex-wrap: wrap; gap: 12px; }
+  .section-actions { flex-wrap: wrap; }
+  .toast { max-width: calc(100% - 40px); }
 }
 /* ---------- 运行动态：每条记录展开后是"每个工具一行" ----------
    以前这里直接把 summary 的 JSON 贴出来，看的人一头雾水

@@ -20,7 +20,7 @@ const CONFIG = Object.freeze({
 });
 
 const SESSION_KEY = "qca-console-session";
-const state = { session: null, sessionEpoch: 0, agents: [], selectedAgentId: null, auto: null, runs: [], progressUpdatedAt: null, progressError: null };
+const state = { session: null, sessionEpoch: 0, agents: [], selectedAgentId: null, auto: null, runs: [], commands: [], manualRequest: null, manualBusy: false, autoBusy: false, progressUpdatedAt: null, progressError: null };
 
 // 工具显示名：优先用设备上报的名字，没有就用这张表兜底；表里没有就直接显示 id。
 const TOOL_NAMES = {
@@ -123,7 +123,11 @@ function elapsedText(startedAt) {
 }
 /** 只显示设备实际调度，不推算正在运行任务的完成时间。 */
 function nextRunText() {
+  const cloud = state.schedules?.auto;
+  if (cloud?.enabled === false) return Number(cloud.applied_version || 0) >= Number(cloud.config_version || 0)
+    ? "自动采集已停止；再次点击「开始自动采集」才恢复" : "自动采集已关闭，等待采集机确认停止定时";
   const info = deviceAuto();
+  if (cloud?.enabled === true && Number(cloud.applied_version || 0) < Number(cloud.config_version || 0)) return "正在开启自动采集，等待采集机确认及上报下次时间";
   if (!info) return "下次自动采集：等待设备上报";
   if (info.enabled === false) return "下次自动采集：未开启";
   if (deviceStatus()?.job?.running && deviceStatus().job.mode === "scheduled") {
@@ -413,23 +417,20 @@ function runStatusPill(status) {
 /** 工具卡片：每套工具一张，卡片上直接设定时（跟旧版"客户采集工具"一样的位置） */
 /** 顶部自动采集控制条：和旧版一样，一个开关 + 间隔 */
 function renderAutoControls() {
-  const enabled = $("#autoEnabled");
   const hours = $("#autoHours");
   const status = $("#autoStatus");
   const save = $("#saveAuto");
-  if (!enabled || !hours || !status) return;
+  if (!hours || !status) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   const cloud = agent ? (state.schedules?.auto || null) : null;   // 来自 get_auto 的云端保存值
   const device = deviceAuto();                                     // 设备实际应用值
   const hasAgent = Boolean(agent);
-  enabled.disabled = !hasAgent;
   hours.disabled = !hasAgent;
   if (save) save.disabled = !hasAgent;
   if (!hasAgent) { renderAutoStatus(); return; }
 
   const savedOn = cloud?.enabled === true;
   const savedHours = Number(cloud?.interval_hours || 6);
-  if (document.activeElement !== enabled) enabled.checked = savedOn;
   if (document.activeElement !== hours) hours.value = String(savedHours);
 
   renderAutoStatus();
@@ -456,6 +457,34 @@ function renderAutoStatus() {
   parts.push(savedOn ? `每 ${savedHours} 小时跑全部工具` : "当前未开启");
   parts.push("自动采集最近 3 天");
   status.textContent = parts.filter(Boolean).join(" · ");
+  const start = $("#startAuto"), stop = $("#stopAuto");
+  if (start) start.disabled = state.autoBusy || !agent || savedOn;
+  if (stop) stop.disabled = state.autoBusy || !agent || !savedOn;
+}
+
+function renderManualStatus() {
+  const node = $("#manualStatus");
+  if (!node || state.manualBusy) return;
+  let request = state.manualRequest;
+  if (!request || request.agentId !== state.selectedAgentId) {
+    const c = state.commands.find(c => c.kind === 'run_now' && c.created_by === state.session?.email && !c.payload?.toolId);
+    request = c ? { agentId: state.selectedAgentId, id: c.id, requestedAt: c.created_at,
+      label: c.payload?.reportStart ? `${c.payload.reportStart} ~ ${c.payload.reportEnd}` : '最近 3 天' } : null;
+  }
+  if (!request) return;
+  state.manualRequest = request;
+  const c = state.commands.find(c => c.id === request.id);
+  if (c?.status === 'failed') { request.completed = true; node.textContent = `手动采集请求失败：${c.result?.message || '请查看指令记录'}`; return; }
+  const started = Date.parse(deviceJob()?.startedAt), requested = Date.parse(request.requestedAt);
+  const job = deviceJob();
+  const agent = state.agents.find(a => a.id === state.selectedAgentId);
+  // A command receipt alone means queued. An older active job is not this request.
+  const actualStart = c?.status === 'done' && job?.running === true && started >= requested
+    && onlineState(agent).cls !== 'off' && state.schedules?.auto?.enabled === false;
+  const done = state.runs.find(r => r.tool_id === '*' && r.trigger === 'manual' && r.finished_at && Date.parse(r.started_at) >= requested);
+  if (actualStart) node.textContent = `已开始手动采集（${request.label}）。自动采集已关闭，进度见下方。`;
+  else if (done) { request.completed = true; node.textContent = `手动采集已结束（${request.label}）：${done.status === 'success' ? '成功' : '有失败或未完整完成，请查看结果'}。${state.schedules?.auto?.enabled === false ? '自动采集保持关闭。' : '自动采集已由用户重新开启。'}`; }
+  else node.textContent = `已提交手动采集（${request.label}），等待采集机开始；自动采集已关闭。`;
 }
 
 /**
@@ -681,11 +710,14 @@ function renderRuns() {
 async function selectAgent(agentId) {
   state.selectedAgentId = agentId;
   state.runs = [];
+  state.commands = [];
+  $("#manualStatus").textContent = "点击立即采集会关闭自动采集；手动结束后不会自动恢复。";
   state.progressUpdatedAt = null;
   state.progressError = null;
   renderAgents();
   renderTools();
   await Promise.all([loadSchedules(), loadRuns()]);
+  await loadProgress();
 }
 
 async function loadAgents() {
@@ -729,17 +761,22 @@ function loadProgress() {
       if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
       const agents = devices.agents || [];
       const agentId = agents.some((row) => row.id === selected) ? selected : (agents[0]?.id || null);
-      const history = agentId ? await api("list_runs", { agentId, limit: 50 }) : { runs: [] };
+      const [history, schedules, commands] = agentId ? await Promise.all([
+        api("list_runs", { agentId, limit: 50 }), api("get_auto", { agentId }), api("list_commands", { agentId, limit: 20 })
+      ]) : [{ runs: [] }, { auto: null }, { commands: [] }];
       if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
       state.agents = agents;
       state.selectedAgentId = agentId;
       state.runs = history.runs || [];
+      if ('auto' in schedules) state.schedules = { auto: schedules.auto };
+      state.commands = commands.commands || [];
       state.progressUpdatedAt = new Date().toISOString();
       state.progressError = null;
       renderAgents();
       renderRuns();
       renderTools();
       renderAutoStatus();
+      renderManualStatus();
     } catch (error) {
       if (state.sessionEpoch === sessionEpoch && state.selectedAgentId === selected) {
         state.progressError = error.message || "网络请求失败";
@@ -760,6 +797,7 @@ function ymd(date) {
 }
 
 async function manualRun() {
+  if (state.manualBusy) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (!agent) { toast("先选一台采集机", "warn"); return; }
   const start = $("#manualStart").value.trim();
@@ -768,15 +806,30 @@ async function manualRun() {
   if (start && end && start > end) { toast("开始日期不能晚于结束日期", "warn"); return; }
 
   const label = start && end ? `${start} ~ ${end}` : "最近 3 天";
-  if (!window.confirm(`确定按「${label}」手动采集一轮（全部工具，按顺序）？\n\n如果自动采集还开着，建议先关掉它，避免两边抢。`)) return;
+  if (state.manualRequest?.agentId === state.selectedAgentId && state.manualRequest.label === label && !state.manualRequest.completed) {
+    toast("这次手动采集已提交，请看实时进度，不会重复下发。", "info"); return;
+  }
+  if (!window.confirm(`确定按「${label}」手动采集一轮（全部工具，按顺序）？\n\n会自动关闭定时采集；手动结束后不会自动恢复。当前正在采的任务不会被中断。`)) return;
 
   setManualBusy(true, "正在下发…");
+  const agentId = agent.id;
   try {
+    const attemptKey = `${agentId}|${label}`;
+    if (state.manualAttempt?.key !== attemptKey) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+      state.manualAttempt = { key: attemptKey, id: `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}` };
+    }
     const result = await api("send_command", {
-      agentId: state.selectedAgentId, kind: "run_now", reportStart: start || undefined, reportEnd: end || undefined
+      agentId, kind: "run_now", manualRequestId: state.manualAttempt.id, reportStart: start || undefined, reportEnd: end || undefined
     });
     toast(result.message || "已下发", "ok");
-    setManualBusy(false, `已下发（${label}）。等当前任务跑完就开始，进度看上面「实时进度」。`);
+    state.manualRequest = { agentId, id: result.commandId, requestedAt: result.requestedAt, label };
+    state.manualAttempt = null;
+    if (state.selectedAgentId !== agentId) { setManualBusy(false); return; }
+    state.schedules = { auto: { ...(state.schedules?.auto || {}), enabled: result.autoStopped !== true, config_version: result.configVersion } };
+    setManualBusy(false, `已提交手动采集（${label}），等待采集机开始；${result.autoStopped ? '自动采集已关闭。' : '自动采集已被重新开启，请核对设置。'}`);
+    renderAutoStatus();
     setTimeout(() => { loadProgress().catch(() => {}); }, 25000);
   } catch (error) {
     toast(`下发失败：${error.message}`, "error");
@@ -809,7 +862,9 @@ function fillPreset3Days() {
 }
 
 function setManualBusy(busy, text) {
-  for (const id of ["#manualRun", "#manualStop", "#manualPreset3"]) {
+  state.manualBusy = busy;
+  $("#manualRun")?.setAttribute("aria-disabled", String(busy));
+  for (const id of ["#manualStop", "#manualPreset3"]) {
     const node = $(id);
     if (node) node.disabled = busy;
   }
@@ -818,29 +873,32 @@ function setManualBusy(busy, text) {
 }
 
 /** 保存全局自动采集设置（每 N 小时跑全部工具，与旧版一致） */
-async function saveAuto() {
+async function saveAuto(enabled = state.schedules?.auto?.enabled === true, preserveInterval = false) {
+  if (state.autoBusy) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (!agent) { toast("先选一台采集机", "warn"); return; }
-  const intervalHours = Number($("#autoHours").value);
+  const intervalHours = Number(preserveInterval ? state.schedules?.auto?.interval_hours || 6 : $("#autoHours").value);
   if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
     toast("自动采集间隔必须是 1 至 168 的整数小时", "warn");
     return;
   }
   const expectedVersion = Number(state.schedules?.auto?.config_version || 0);
+  state.autoBusy = true;
+  renderAutoStatus();
   try {
     const result = await api("save_auto", {
       agentId: state.selectedAgentId,
-      enabled: $("#autoEnabled").checked,
+      enabled: enabled === true,
       intervalHours,
       expectedVersion
     });
-    toast(`已保存：每 ${intervalHours} 小时跑全部工具（云端 v${result.configVersion}）。等设备下一次心跳后会显示「设备已应用」。`, "ok");
+    toast(enabled ? `已请求开始自动采集，每 ${intervalHours} 小时一轮，等待设备确认。` : "已请求停止自动采集；不打断当前任务，结束后不再自动开始。", "ok");
     await loadSchedules();
     await loadAgents();
   } catch (error) {
     if (error.conflict) { toast(error.message, "warn"); await loadSchedules(); return; }
     toast(`保存失败：${error.message}`, "error");
-  }
+  } finally { state.autoBusy = false; renderAutoStatus(); }
 }
 
 /** 可用采集流程：优先用设备上报的，保证与采集机上真实存在的流程一致 */
@@ -923,7 +981,9 @@ function wireEvents() {
   $("#refreshAgents").addEventListener("click", refreshAll);
   $("#refreshProgress").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
-  $("#saveAuto").addEventListener("click", saveAuto);
+  $("#saveAuto").addEventListener("click", () => saveAuto());
+  $("#startAuto").addEventListener("click", () => saveAuto(true));
+  $("#stopAuto").addEventListener("click", () => saveAuto(false, true));
   $("#manualRun").addEventListener("click", manualRun);
   $("#manualStop").addEventListener("click", manualStop);
   $("#manualPreset3").addEventListener("click", fillPreset3Days);
