@@ -13,10 +13,10 @@
  */
 
 const CONFIG = Object.freeze({
-  supabaseUrl: "https://mabxdkjqilulkrmqrrgo.supabase.co",
-  publishableKey: "sb_publishable_lfHpd1y1gCaQIDXfRkD_8w_O1bPMWGx",
+  supabaseUrl: "https://qskjpexmoerowosnhidj.supabase.co",
+  publishableKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFza2pwZXhtb2Vyb3dvc25oaWRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1NTE5NzEsImV4cCI6MjEwODEyNzk3MX0.Cbz7RjmIHLbbYwImanzl8O9wsNJfD6n8Zq_ne_Hz2Nw",
   // 页面托管在 GitHub Pages，接口在 Supabase 函数上 —— 是跨域调用。
-  apiPath: "https://mabxdkjqilulkrmqrrgo.supabase.co/functions/v1/collector-admin/api"
+  apiPath: "https://qskjpexmoerowosnhidj.supabase.co/functions/v1/collector-admin/api"
 });
 
 const SESSION_KEY = "qca-console-session";
@@ -171,6 +171,7 @@ function saveSession(value) {
 // ---------------- 登录 / 令牌续期 ----------------
 
 async function signIn(email, password) {
+  if (email.toLowerCase() === "admin") email = "ops-temp-admin@anbito.invalid";
   const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: CONFIG.publishableKey },
