@@ -28,6 +28,7 @@ const TOOL_NAMES = {
   "liyang-tes": "李杨 tes",
   "huihe": "惠和",
   "yujianweilai-1": "域见未来 1",
+  "account-center": "账户中心采集",
   "tool5": "李杨赫丝"
 };
 // 卡片头像配色，按顺序循环，跟旧版一样每张卡片一个色
