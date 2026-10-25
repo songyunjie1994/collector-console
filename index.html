@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>投流数据统一采集中心</title>
-<link rel="stylesheet" href="./console.css">
+  <link rel="stylesheet" href="./console.css?v=20261025-independent-plans-quiet-1">
 </head>
 <body>
 <!-- 登录 -->
@@ -52,17 +52,22 @@
       <span id="agentOnline" class="inline-status"><i></i><span>—</span></span>
     </div>
     <div class="schedule-control">
-      <div class="schedule-line">
-        <label class="schedule-switch" for="autoEnabled">
-          <input id="autoEnabled" type="checkbox">
-          <span>自动采集</span>
-        </label>
+      <div id="legacyAutoLine" class="schedule-line" hidden>
+        <span class="schedule-switch">自动采集</span>
         <span class="schedule-every">每</span>
         <input id="autoHours" type="number" min="1" max="168" step="1" value="6" aria-label="自动采集间隔小时">
         <span class="schedule-every">小时</span>
-        <button id="saveAuto" class="schedule-save">保存</button>
+        <button id="saveAuto" class="schedule-save">保存间隔</button>
+        <button id="startAuto" class="schedule-save">开始自动采集</button>
+        <button id="stopAuto" class="schedule-save danger-ghost">停止自动采集</button>
+      </div>
+      <div id="groupPlans">
+        <div class="schedule-line"><label class="schedule-switch"><input id="trafficEnabled" type="checkbox">投流自动采集</label><span>每</span><input id="trafficHours" type="number" min="1" max="168" value="1" aria-label="投流间隔小时"><span>小时</span></div>
+        <small>每日02:00–08:00不启动新一轮，已开始的本轮采完（北京时间）。</small>
+        <div class="schedule-line account-plan"><label class="schedule-switch"><input id="accountEnabled" type="checkbox">账户中心</label><span>每天</span><input id="accountTime" type="time" value="05:00" aria-label="账户中心每日采集时间"><span>北京时间</span><button id="savePlans" class="schedule-save">保存计划</button></div>
       </div>
       <small id="autoStatus">未开启 · 自动采集最近 3 天 · 采集机需保持开机</small>
+      <div id="nextAutoRun" role="status" style="margin-top:6px;font-size:12px;font-weight:700;color:#654bc8">下次自动采集：等待设备上报</div>
     </div>
     <div class="manual-control">
       <div class="manual-line">
@@ -76,7 +81,7 @@
         <button id="manualStop" class="ghost-button danger-ghost">停止采集</button>
         <button id="manualPreset3" class="ghost-button">最近 3 天</button>
       </div>
-      <small id="manualStatus">填日期 → 立即采集：按你选的区间跑一轮全部工具。想让它安静下来先关掉上面的「自动采集」。</small>
+      <small id="manualStatus" role="status" aria-live="polite">点「立即采集」会自动关闭定时采集，再按所选区间采集；结束后不会自动恢复定时。</small>
     </div>
     <div class="overview">
       <div class="overview-item"><span>工具总数</span><strong id="toolCount">—</strong></div>
@@ -157,6 +162,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="./console.js"></script>
+<script src="./console.js?v=20261025-independent-plans-quiet-1"></script>
 </body>
 </html>

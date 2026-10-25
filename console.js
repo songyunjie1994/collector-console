@@ -20,10 +20,34 @@ const CONFIG = Object.freeze({
 });
 
 const SESSION_KEY = "qca-console-session";
-const state = { session: null, agents: [], selectedAgentId: null, auto: null, runs: [] };
+const state = { session: null, sessionEpoch: 0, agents: [], selectedAgentId: null, auto: null, runs: [], commands: [], manualRequest: null, manualBusy: false, autoBusy: false, progressUpdatedAt: null, progressError: null };
+let plansEditVersion=null;
+function renderGroupedPlans(){
+ const plan=state.schedules?.plan;if(!plan)return false;
+ const agent=state.agents.find(a=>a.id===state.selectedAgentId);
+ const fields=['#trafficEnabled','#trafficHours','#accountEnabled','#accountTime'];
+ for(const id of fields){const field=$(id);if(field)field.disabled=!agent||state.autoBusy;}
+ if(plansEditVersion===null){$('#trafficEnabled').checked=plan.traffic_enabled;$('#trafficHours').value=String(plan.traffic_interval_hours);$('#accountEnabled').checked=plan.account_enabled;$('#accountTime').value=plan.account_daily_at;}
+ const applied=Number(plan.applied_version)>=Number(plan.config_version)&&Number(plan.config_version)>0;
+ $('#autoStatus').textContent=(applied?`设备已应用 v${plan.applied_version}`:`云端已保存 v${plan.config_version}，待设备应用`)+(plansEditVersion===null?'':' · 有未保存的修改');
+ const device=agent?.status?.plans;const next=device?.configVersion===Number(plan.config_version)?(device.plans||[]).filter(p=>p.enabled&&p.nextRunAt).map(p=>(p.planId==='traffic-hourly'?'投流':'账户中心')+'下次 '+new Date(p.nextRunAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})):[];
+ $('#nextAutoRun').textContent=next.join(' · ')||(!plan.traffic_enabled&&!plan.account_enabled?'两套计划均未开启':'下次时间等待设备上报');
+ return true;
+}
+async function saveGroupedPlans(){
+ if(state.autoBusy)return;const hours=Number($('#trafficHours').value),dailyAt=$('#accountTime').value;
+ if(!Number.isInteger(hours)||hours<1||hours>168||!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)){toast('请填写1至168整数小时和有效每日时间','warn');return;}
+ const agentId=state.selectedAgentId;state.autoBusy=true;$('#savePlans').disabled=true;renderGroupedPlans();
+ try{const result=await api('save_plans',{agentId,trafficEnabled:$('#trafficEnabled').checked,intervalHours:hours,accountEnabled:$('#accountEnabled').checked,dailyAt,expectedVersion:plansEditVersion??Number(state.schedules?.plan?.config_version||0)});
+  if(state.selectedAgentId!==agentId)return;
+  plansEditVersion=null;toast(`两套计划已保存 v${result.plan.config_version}，等待设备应用；不会立即采集。`,'ok');await loadSchedules();
+ }catch(error){if(error.conflict){plansEditVersion=null;await loadSchedules();}toast(error.message,'error');}
+ finally{state.autoBusy=false;$('#savePlans').disabled=false;renderGroupedPlans();}
+}
 
 // 工具显示名：优先用设备上报的名字，没有就用这张表兜底；表里没有就直接显示 id。
 const TOOL_NAMES = {
+  "account-center":"账户中心采集",
   "liyang-tina": "李杨 tina",
   "liyang-tes": "李杨 tes",
   "huihe": "惠和",
@@ -47,7 +71,20 @@ function deviceTools() {
   return Array.isArray(tools) ? tools : [];
 }
 function lastRunFor(toolId) {
-  return state.runs.find((row) => row.tool_id === toolId) || null;
+  const matches = state.runs.flatMap((row) => {
+    if (row.tool_id === toolId) return [row];
+    if (row.tool_id !== "*") return [];
+    const tool = Array.isArray(row.summary?.tools) ? row.summary.tools.find((item) => item?.id === toolId) : null;
+    return tool ? [{ ...row, tool_id: toolId, status: tool.status, toolResult: tool }] : [];
+  });
+  const time = (row) => Date.parse(row.finished_at || row.started_at || row.planned_for || "") || 0;
+  return matches.sort((a, b) => time(b) - time(a))[0] || null;
+}
+function displayTime(value) {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) ? new Date(time).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }) : "未知";
 }
 function deviceAuto() {
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
@@ -83,10 +120,15 @@ const CLIENT_STATE_LABEL = {
   saving: ["保存数据", "busy"],
   exporting: ["导出报表", "busy"],
   syncing: ["同步云端", "busy"],
+  sync_pending: ["采完·回传待重试", "wait"],
+  sync_superseded: ["旧回传已阻止", "wait"],
+  cloud_sync_network: ["回传网络失败", "off"],
+  cloud_sync_http: ["回传接口失败", "off"],
   opening_login: ["打开登录", "wait"],
   success: ["成功", "on"],
   partial_success: ["部分成功", "wait"],
   failed: ["失败", "off"],
+  step_failed: ["步骤失败", "off"],
   login_required: ["需登录", "off"],
   cloud_conflict: ["云端冲突", "off"],
   error: ["异常", "off"]
@@ -103,16 +145,26 @@ function elapsedText(startedAt) {
   if (minutes < 60) return `已用时 ${minutes} 分钟`;
   return `已用时 ${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
-/** "下次大约 HH:MM" —— 用设备上报的下次执行时间（没上报就留空，不猜） */
+/** 只显示设备实际调度，不推算正在运行任务的完成时间。 */
 function nextRunText() {
+  const cloud = state.schedules?.auto;
+  if (cloud?.enabled === false) return Number(cloud.applied_version || 0) >= Number(cloud.config_version || 0)
+    ? "自动采集已停止；再次点击「开始自动采集」才恢复" : "自动采集已关闭，等待采集机确认停止定时";
   const info = deviceAuto();
-  if (!info?.nextRunAt) return "";
+  if (cloud?.enabled === true && Number(cloud.applied_version || 0) < Number(cloud.config_version || 0)) return "正在开启自动采集，等待采集机确认及上报下次时间";
+  if (!info) return "下次自动采集：等待设备上报";
+  if (info.enabled === false) return "下次自动采集：未开启";
+  if (deviceStatus()?.job?.running && deviceStatus().job.mode === "scheduled") {
+    const hours = Number(info.intervalHours);
+    return `本轮正在采集；${hours > 0 ? `结束后间隔 ${hours} 小时再采` : "下次时间等待设备上报"}`;
+  }
+  if (!info.nextRunAt) return "下次自动采集：等待设备上报";
   const when = Date.parse(info.nextRunAt);
-  if (!Number.isFinite(when)) return "";
+  if (!Number.isFinite(when)) return "下次自动采集：设备上报时间无效";
   const deltaMin = Math.round((when - Date.now()) / 60000);
-  const clock = new Date(when).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const clock = displayTime(info.nextRunAt);
   const rel = deltaMin <= 0 ? "（已到点，等采集空闲）" : deltaMin < 60 ? `（约 ${deltaMin} 分钟后）` : `（约 ${Math.round(deltaMin / 60)} 小时后）`;
-  return ` · 下次 ${clock}${rel}`;
+  return `下次自动采集：${clock}（北京时间）${rel}`;
 }
 
 function toast(message, kind = "info") {
@@ -133,6 +185,7 @@ function loadSession() {
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; }
 }
 function saveSession(value) {
+  if (!value) state.sessionEpoch += 1;
   try {
     if (value) localStorage.setItem(SESSION_KEY, JSON.stringify(value));
     else localStorage.removeItem(SESSION_KEY);
@@ -142,6 +195,7 @@ function saveSession(value) {
 // ---------------- 登录 / 令牌续期 ----------------
 
 async function signIn(email, password) {
+  if (email.toLowerCase() === "admin") email = "ops-temp-admin@anbito.invalid";
   const response = await fetch(`${CONFIG.supabaseUrl}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: CONFIG.publishableKey },
@@ -306,9 +360,7 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = setInterval(() => {
     if (document.hidden || !state.session || !state.selectedAgentId) return;
-    loadAgents()
-      .then(() => { renderProgress(); renderTools(); })
-      .catch(() => { /* 自动刷新失败静默，手动刷新仍会报错 */ });
+    loadProgress().catch(() => { /* loadProgress 已明确显示刷新失败，不隐瞒旧快照 */ });
   }, 20000);
 }
 
@@ -355,7 +407,9 @@ function renderOverview() {
   const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
   set("#toolCount", agent ? (agent.status?.toolCount ?? deviceTools().length) : "—");
 
-  set("#failCount", state.runs.filter((row) => row.status === "failed").length);
+  const job = deviceJob();
+  const outcomes = job?.results;
+  set("#failCount", Array.isArray(outcomes) ? outcomes.filter((row) => jobOutcomeStatus(job, row) === "failed").length : "—");
   const status = $("#jobStatus");
   const text = $("#jobStatusText");
   if (status && text) {
@@ -368,9 +422,17 @@ function renderOverview() {
   }
 }
 
+function jobOutcomeStatus(job, row) {
+  // Only the explicit stale-report protection in upload-only recovery is not
+  // a collection failure. Preserve all other failures and the original ledger.
+  return job?.mode === "sync-recovery" && row?.status === "failed"
+    && (row.errorCode === "sync_superseded" || row.error === "云端已有此账户日期范围的更新采集，旧报表已保留，未覆盖新数据")
+    ? "protected" : row?.status;
+}
+
 function runStatusPill(status) {
   const map = {
-    success: ["成功", "on"], partial: ["部分成功", "wait"], failed: ["失败", "off"],
+    success: ["成功", "on"], partial: ["部分成功", "wait"], partial_success: ["部分成功", "wait"], failed: ["失败", "off"],
     skipped: ["已跳过", "wait"], running: ["执行中", "busy"]
   };
   const [label, cls] = map[status] || [status || "—", "wait"];
@@ -380,24 +442,38 @@ function runStatusPill(status) {
 /** 工具卡片：每套工具一张，卡片上直接设定时（跟旧版"客户采集工具"一样的位置） */
 /** 顶部自动采集控制条：和旧版一样，一个开关 + 间隔 */
 function renderAutoControls() {
-  const enabled = $("#autoEnabled");
+  if(renderGroupedPlans())return;
   const hours = $("#autoHours");
   const status = $("#autoStatus");
   const save = $("#saveAuto");
-  if (!enabled || !hours || !status) return;
+  if (!hours || !status) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   const cloud = agent ? (state.schedules?.auto || null) : null;   // 来自 get_auto 的云端保存值
   const device = deviceAuto();                                     // 设备实际应用值
   const hasAgent = Boolean(agent);
-  enabled.disabled = !hasAgent;
   hours.disabled = !hasAgent;
   if (save) save.disabled = !hasAgent;
-  if (!hasAgent) { status.textContent = "未选择采集机"; return; }
+  if (!hasAgent) { renderAutoStatus(); return; }
 
   const savedOn = cloud?.enabled === true;
   const savedHours = Number(cloud?.interval_hours || 6);
-  if (document.activeElement !== enabled) enabled.checked = savedOn;
   if (document.activeElement !== hours) hours.value = String(savedHours);
+
+  renderAutoStatus();
+}
+
+// 心跳刷新只更新只读状态，不覆盖尚未保存的间隔或开关。
+function renderAutoStatus() {
+  if(renderGroupedPlans())return;
+  const status = $("#autoStatus");
+  const next = $("#nextAutoRun");
+  const agent = state.agents.find((row) => row.id === state.selectedAgentId);
+  if (next) next.textContent = agent ? nextRunText() : "下次自动采集：未选择采集机";
+  if (!status) return;
+  if (!agent) { status.textContent = "未选择采集机"; return; }
+  const cloud = state.schedules?.auto;
+  const savedOn = cloud?.enabled === true;
+  const savedHours = Number(cloud?.interval_hours || 6);
 
   const savedVersion = Number(cloud?.config_version || 0);
   const appliedVersion = Number(cloud?.applied_version || 0);
@@ -407,8 +483,35 @@ function renderAutoControls() {
   else parts.push(`云端已保存 v${savedVersion}，待设备应用`);
   parts.push(savedOn ? `每 ${savedHours} 小时跑全部工具` : "当前未开启");
   parts.push("自动采集最近 3 天");
-  parts.push(nextRunText().replace(" · ", ""));
   status.textContent = parts.filter(Boolean).join(" · ");
+  const start = $("#startAuto"), stop = $("#stopAuto");
+  if (start) start.disabled = state.autoBusy || !agent || savedOn;
+  if (stop) stop.disabled = state.autoBusy || !agent || !savedOn;
+}
+
+function renderManualStatus() {
+  const node = $("#manualStatus");
+  if (!node || state.manualBusy) return;
+  let request = state.manualRequest;
+  if (!request || request.agentId !== state.selectedAgentId) {
+    const c = state.commands.find(c => c.kind === 'run_now' && c.created_by === state.session?.email && !c.payload?.toolId);
+    request = c ? { agentId: state.selectedAgentId, id: c.id, requestedAt: c.created_at,
+      label: c.payload?.reportStart ? `${c.payload.reportStart} ~ ${c.payload.reportEnd}` : '最近 3 天' } : null;
+  }
+  if (!request) return;
+  state.manualRequest = request;
+  const c = state.commands.find(c => c.id === request.id);
+  if (c?.status === 'failed') { request.completed = true; node.textContent = `手动采集请求失败：${c.result?.message || '请查看指令记录'}`; return; }
+  const started = Date.parse(deviceJob()?.startedAt), requested = Date.parse(request.requestedAt);
+  const job = deviceJob();
+  const agent = state.agents.find(a => a.id === state.selectedAgentId);
+  // A command receipt alone means queued. An older active job is not this request.
+  const actualStart = c?.status === 'done' && job?.running === true && started >= requested
+    && onlineState(agent).cls !== 'off' && state.schedules?.auto?.enabled === false;
+  const done = state.runs.find(r => r.tool_id === '*' && r.trigger === 'manual' && r.finished_at && Date.parse(r.started_at) >= requested);
+  if (actualStart) node.textContent = `已开始手动采集（${request.label}）。自动采集已关闭，进度见下方。`;
+  else if (done) { request.completed = true; node.textContent = `手动采集已结束（${request.label}）：${done.status === 'success' ? '成功' : '有失败或未完整完成，请查看结果'}。${state.schedules?.auto?.enabled === false ? '自动采集保持关闭。' : '自动采集已由用户重新开启。'}`; }
+  else node.textContent = `已提交手动采集（${request.label}），等待采集机开始；自动采集已关闭。`;
 }
 
 /**
@@ -449,6 +552,9 @@ function renderProgress() {
   const activeId = job?.activeClientId || null;
   const activeRow = activeId ? (rows.find((row) => row.id === activeId) || { id: activeId, name: toolLabel(activeId) }) : null;
   const elapsed = job?.startedAt ? elapsedText(job.startedAt) : "";
+  const results = Array.isArray(job?.results) ? job.results : [];
+  const count = (status) => results.filter((row) => jobOutcomeStatus(job, row) === status).length;
+  const outcomes = `成功 ${count("success")} · 部分成功 ${count("partial_success")} · 失败 ${count("failed")} · 跳过 ${count("skipped")}${count("protected") ? ` · 旧回传保护 ${count("protected")}` : ""}`;
 
   const head = job?.running
     ? `<div class="progress-head">
@@ -456,9 +562,12 @@ function renderProgress() {
          <strong>${esc(activeRow?.name || activeRow?.id || "—")}</strong>
          <span class="muted">第 ${Math.min(done + 1, total)}/${total} 个${elapsed ? ` · ${esc(elapsed)}` : ""}</span>
        </div>`
-    : `<div class="progress-head"><span class="pill on">空闲</span><span class="muted">当前没有采集任务在跑</span></div>`;
+    : `<div class="progress-head"><span class="pill ${count("failed") ? "wait" : "on"}">空闲</span><span class="muted">当前没有采集任务在跑${results.length ? ` · ${job?.mode === "sync-recovery" ? "上次回传恢复已结束" : "上轮已结束"}（${esc(outcomes)}）` : ""}</span></div>`;
 
-  const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>${done}/${total}</span></div>`;
+  const bar = `<div class="progress-bar"><i style="width:${percent}%"></i><span>已处理 ${done}/${total}（不是成功率）</span></div>`;
+  const freshness = `<div class="progress-queue">设备心跳：${esc(displayTime(agent.last_seen_at))} · 网页刷新：${esc(displayTime(state.progressUpdatedAt))}${
+    state.progressError ? ` · <span class="pill off">刷新失败，当前显示旧快照：${esc(state.progressError)}</span>` : ""
+  }${job?.running && results.length ? `<br>本轮已处理结果：${esc(outcomes)}` : ""}</div>`;
 
   const pending = Number(queue?.pending) || 0;
   const executing = Number(queue?.executing) || 0;
@@ -473,7 +582,7 @@ function renderProgress() {
       <span class="pc-msg muted">${esc(row.message || "")}</span>
     </div>`).join("");
 
-  box.innerHTML = head + bar + queueLine + `<div class="progress-clients">${list}</div>`;
+  box.innerHTML = head + bar + freshness + queueLine + `<div class="progress-clients">${list}</div>`;
 }
 
 function renderTools() {
@@ -496,9 +605,9 @@ function renderTools() {
     const live = clientStateOf(toolId);
     const accent = ACCENTS[index % ACCENTS.length];
     const lastText = !lastRun ? "还没有执行记录"
-      : `${esc((lastRun.planned_for || "").replace("T", " ").slice(5, 16))} ${runStatusPill(lastRun.status)}`;
+      : `${lastRun.finished_at ? "完成" : "启动"} ${esc(displayTime(lastRun.finished_at || lastRun.started_at || lastRun.planned_for))} ${runStatusPill(lastRun.status)}`;
     const auto = deviceAuto();
-    const on = auto?.enabled === true;
+    const on = deviceStatus()?.plans?deviceStatus().plans.plans?.find(p=>p.planId===(toolId==='account-center'?'account-center-daily':'traffic-hourly'))?.enabled===true:auto?.enabled===true;
     const statusPill = on ? '<span class="pill on">自动采集已开</span>' : '<span class="pill off">自动采集未开</span>';
     return `<article class="client-card ${accent}">
       <span class="card-order">${index + 1}</span>
@@ -511,6 +620,7 @@ function renderTools() {
         ${statusPill}
       </div>
       <div class="tool-live">当前：${live ? `${clientStatePill(live)} <span class="muted">${esc(live.message || "")}</span>` : '<span class="pill wait">未上报</span>'}</div>
+      ${live?.syncRecovery ? `<div class="tool-sync muted">回传待重试 ${esc(live.syncRecovery.pending)}；需核验 ${esc(live.syncRecovery.blocked)}${live.syncRecovery.nextAttemptAt ? `；下次回传重试 ${esc(displayTime(live.syncRecovery.nextAttemptAt))}` : ""}${live.syncRecovery.lastVerifiedAt ? `；最近回传核验 ${esc(displayTime(live.syncRecovery.lastVerifiedAt))}` : ""}</div>` : ""}
       <div class="tool-last">最近一次：${lastText}</div>
     </article>`;
   }).join("");
@@ -602,7 +712,7 @@ function renderRuns() {
     const fullLog = cleanLogText(run.log_tail) || "（没有日志）";
     return `<div class="activity-item">
       <div class="activity-head">
-        <span class="activity-time">${esc((run.planned_for || "").replace("T", " ").slice(5, 16))}</span>
+        <span class="activity-time">${esc(displayTime(run.started_at || run.planned_for))}</span>
         <span class="activity-tool">${esc(run.tool_name || toolLabel(run.tool_id))}</span>
         ${runStatusPill(run.status)}
         <span class="activity-text">${esc(trigger[run.trigger] || run.trigger || "")}${runDurationText(run) ? " · " + esc(runDurationText(run)) : ""}${counts.length ? " · " + esc(counts.join(" · ")) : ""}</span>
@@ -625,9 +735,17 @@ function renderRuns() {
 // ---------------- 行为 ----------------
 
 async function selectAgent(agentId) {
+  plansEditVersion=null;
   state.selectedAgentId = agentId;
+  state.runs = [];
+  state.commands = [];
+  $("#manualStatus").textContent = "点击立即采集会关闭自动采集；手动结束后不会自动恢复。";
+  state.progressUpdatedAt = null;
+  state.progressError = null;
   renderAgents();
+  renderTools();
   await Promise.all([loadSchedules(), loadRuns()]);
+  await loadProgress();
 }
 
 async function loadAgents() {
@@ -643,16 +761,61 @@ async function loadAgents() {
 async function loadSchedules() {
   if (!state.selectedAgentId) { state.schedules = null; renderAutoControls(); return; }
   const body = await api("get_auto", { agentId: state.selectedAgentId });
-  state.schedules = { auto: body.auto || null };
+  state.schedules = { auto: body.auto || null,...(body.plan?{plan:body.plan}:{}) };
   renderAutoControls();
   renderTools();
 }
 
 async function loadRuns() {
   if (!state.selectedAgentId) { state.runs = []; renderRuns(); return; }
-  const body = await api("list_runs", { agentId: state.selectedAgentId, limit: 50 });
+  const agentId = state.selectedAgentId;
+  const sessionEpoch = state.sessionEpoch;
+  const body = await api("list_runs", { agentId, limit: 50 });
+  if (state.selectedAgentId !== agentId || state.sessionEpoch !== sessionEpoch) return;
   state.runs = body.runs || [];
   renderRuns();
+  renderTools();
+}
+
+// 一次刷新同时读设备心跳和运行记录；不碰表单、调度或采集命令。
+let progressRefresh = null;
+function loadProgress() {
+  if (progressRefresh) return progressRefresh;
+  const selected = state.selectedAgentId;
+  const sessionEpoch = state.sessionEpoch;
+  progressRefresh = (async () => {
+    try {
+      const devices = await api("list_agents");
+      if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
+      const agents = devices.agents || [];
+      const agentId = agents.some((row) => row.id === selected) ? selected : (agents[0]?.id || null);
+      const [history, schedules, commands] = agentId ? await Promise.all([
+        api("list_runs", { agentId, limit: 50 }), api("get_auto", { agentId }), api("list_commands", { agentId, limit: 20 })
+      ]) : [{ runs: [] }, { auto: null }, { commands: [] }];
+      if (state.sessionEpoch !== sessionEpoch || state.selectedAgentId !== selected) return;
+      state.agents = agents;
+      state.selectedAgentId = agentId;
+      state.runs = history.runs || [];
+      if ('auto' in schedules) state.schedules = { auto: schedules.auto,...(schedules.plan?{plan:schedules.plan}:{}) };
+      state.commands = commands.commands || [];
+      state.progressUpdatedAt = new Date().toISOString();
+      state.progressError = null;
+      renderAgents();
+      renderRuns();
+      renderTools();
+      renderAutoStatus();
+      renderManualStatus();
+    } catch (error) {
+      if (state.sessionEpoch === sessionEpoch && state.selectedAgentId === selected) {
+        state.progressError = error.message || "网络请求失败";
+        renderProgress();
+      }
+      throw error;
+    } finally {
+      progressRefresh = null;
+    }
+  })();
+  return progressRefresh;
 }
 
 /** 手动采集：可选区间。`立即采集` = 按填的日期跑一轮；空着 = 最近 3 天 */
@@ -662,6 +825,7 @@ function ymd(date) {
 }
 
 async function manualRun() {
+  if (state.manualBusy) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (!agent) { toast("先选一台采集机", "warn"); return; }
   const start = $("#manualStart").value.trim();
@@ -670,15 +834,30 @@ async function manualRun() {
   if (start && end && start > end) { toast("开始日期不能晚于结束日期", "warn"); return; }
 
   const label = start && end ? `${start} ~ ${end}` : "最近 3 天";
-  if (!window.confirm(`确定按「${label}」手动采集一轮（全部工具，按顺序）？\n\n如果自动采集还开着，建议先关掉它，避免两边抢。`)) return;
+  if (state.manualRequest?.agentId === state.selectedAgentId && state.manualRequest.label === label && !state.manualRequest.completed) {
+    toast("这次手动采集已提交，请看实时进度，不会重复下发。", "info"); return;
+  }
+  if (!window.confirm(`确定按「${label}」手动采集一轮（全部工具，按顺序）？\n\n会自动关闭定时采集；手动结束后不会自动恢复。当前正在采的任务不会被中断。`)) return;
 
   setManualBusy(true, "正在下发…");
+  const agentId = agent.id;
   try {
+    const attemptKey = `${agentId}|${label}`;
+    if (state.manualAttempt?.key !== attemptKey) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+      state.manualAttempt = { key: attemptKey, id: `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}` };
+    }
     const result = await api("send_command", {
-      agentId: state.selectedAgentId, kind: "run_now", reportStart: start || undefined, reportEnd: end || undefined
+      agentId, kind: "run_now", manualRequestId: state.manualAttempt.id, reportStart: start || undefined, reportEnd: end || undefined
     });
     toast(result.message || "已下发", "ok");
-    setManualBusy(false, `已下发（${label}）。等当前任务跑完就开始，进度看上面「实时进度」。`);
+    state.manualRequest = { agentId, id: result.commandId, requestedAt: result.requestedAt, label };
+    state.manualAttempt = null;
+    if (state.selectedAgentId !== agentId) { setManualBusy(false); return; }
+    state.schedules = { auto: { ...(state.schedules?.auto || {}), enabled: result.autoStopped !== true, config_version: result.configVersion },...(result.plan?{plan:result.plan}:{}) };
+    setManualBusy(false, `已提交手动采集（${label}），等待采集机开始；${result.autoStopped ? '自动采集已关闭。' : '自动采集已被重新开启，请核对设置。'}`);
+    renderAutoStatus();
     setTimeout(() => { loadProgress().catch(() => {}); }, 25000);
   } catch (error) {
     toast(`下发失败：${error.message}`, "error");
@@ -711,7 +890,9 @@ function fillPreset3Days() {
 }
 
 function setManualBusy(busy, text) {
-  for (const id of ["#manualRun", "#manualStop", "#manualPreset3"]) {
+  state.manualBusy = busy;
+  $("#manualRun")?.setAttribute("aria-disabled", String(busy));
+  for (const id of ["#manualStop", "#manualPreset3"]) {
     const node = $(id);
     if (node) node.disabled = busy;
   }
@@ -720,29 +901,32 @@ function setManualBusy(busy, text) {
 }
 
 /** 保存全局自动采集设置（每 N 小时跑全部工具，与旧版一致） */
-async function saveAuto() {
+async function saveAuto(enabled = state.schedules?.auto?.enabled === true, preserveInterval = false) {
+  if (state.autoBusy) return;
   const agent = state.agents.find((row) => row.id === state.selectedAgentId);
   if (!agent) { toast("先选一台采集机", "warn"); return; }
-  const intervalHours = Number($("#autoHours").value);
+  const intervalHours = Number(preserveInterval ? state.schedules?.auto?.interval_hours || 6 : $("#autoHours").value);
   if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 168) {
     toast("自动采集间隔必须是 1 至 168 的整数小时", "warn");
     return;
   }
   const expectedVersion = Number(state.schedules?.auto?.config_version || 0);
+  state.autoBusy = true;
+  renderAutoStatus();
   try {
     const result = await api("save_auto", {
       agentId: state.selectedAgentId,
-      enabled: $("#autoEnabled").checked,
+      enabled: enabled === true,
       intervalHours,
       expectedVersion
     });
-    toast(`已保存：每 ${intervalHours} 小时跑全部工具（云端 v${result.configVersion}）。等设备下一次心跳后会显示「设备已应用」。`, "ok");
+    toast(enabled ? `已请求开始自动采集，每 ${intervalHours} 小时一轮，等待设备确认。` : "已请求停止自动采集；不打断当前任务，结束后不再自动开始。", "ok");
     await loadSchedules();
     await loadAgents();
   } catch (error) {
     if (error.conflict) { toast(error.message, "warn"); await loadSchedules(); return; }
     toast(`保存失败：${error.message}`, "error");
-  }
+  } finally { state.autoBusy = false; renderAutoStatus(); }
 }
 
 /** 可用采集流程：优先用设备上报的，保证与采集机上真实存在的流程一致 */
@@ -791,20 +975,24 @@ async function submitAddTool() {
 
 async function refreshAll() {
   try {
-    await loadAgents();
-    if (state.selectedAgentId) { await loadSchedules(); await loadRuns(); }
+    await loadProgress();
+    if (state.selectedAgentId) await loadSchedules();
   } catch (error) {
     toast(error.message, "error");
   }
 }
 
 function wireEvents() {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.session) loadProgress().catch(() => {});
+  });
   $("#loginBtn").addEventListener("click", async () => {
     const button = $("#loginBtn");
     button.disabled = true;
     $("#loginError").textContent = "";
     try {
       const session = await signIn($("#email").value.trim(), $("#password").value);
+      state.sessionEpoch += 1;
       state.session = session;
       saveSession(session);
       await loadAgents();
@@ -821,7 +1009,11 @@ function wireEvents() {
   $("#refreshAgents").addEventListener("click", refreshAll);
   $("#refreshProgress").addEventListener("click", refreshAll);
   $("#refreshRuns").addEventListener("click", () => loadRuns().catch((e) => toast(e.message, "error")));
-  $("#saveAuto").addEventListener("click", saveAuto);
+  $("#saveAuto").addEventListener("click", () => saveAuto());
+  $("#startAuto").addEventListener("click", () => saveAuto(true));
+  $("#stopAuto").addEventListener("click", () => saveAuto(false, true));
+  $('#savePlans')?.addEventListener('click',saveGroupedPlans);
+  for(const id of ['#trafficEnabled','#trafficHours','#accountEnabled','#accountTime'])$(id)?.addEventListener('input',()=>{if(plansEditVersion===null)plansEditVersion=Number(state.schedules?.plan?.config_version||0);});
   $("#manualRun").addEventListener("click", manualRun);
   $("#manualStop").addEventListener("click", manualStop);
   $("#manualPreset3").addEventListener("click", fillPreset3Days);
