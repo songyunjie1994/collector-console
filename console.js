@@ -22,12 +22,13 @@ const CONFIG = Object.freeze({
 const SESSION_KEY = "qca-console-session";
 const state = { session: null, sessionEpoch: 0, agents: [], selectedAgentId: null, auto: null, runs: [], commands: [], manualRequest: null, manualBusy: false, autoBusy: false, progressUpdatedAt: null, progressError: null };
 let plansEditVersion=null;
+function renderTrafficMode(){const daily=$('#trafficMode').value==='daily';$('#trafficDailyFields').hidden=!daily;$('#trafficIntervalFields').hidden=daily;}
 function renderGroupedPlans(){
  const plan=state.schedules?.plan;if(!plan)return false;
  const agent=state.agents.find(a=>a.id===state.selectedAgentId);
- const fields=['#trafficEnabled','#trafficHours','#accountEnabled','#accountTime'];
+ const fields=['#trafficEnabled','#trafficMode','#trafficTime','#trafficHours','#accountEnabled','#accountTime'];
  for(const id of fields){const field=$(id);if(field)field.disabled=!agent||state.autoBusy;}
- if(plansEditVersion===null){$('#trafficEnabled').checked=plan.traffic_enabled;$('#trafficHours').value=String(plan.traffic_interval_hours);$('#accountEnabled').checked=plan.account_enabled;$('#accountTime').value=plan.account_daily_at;}
+ if(plansEditVersion===null){$('#trafficEnabled').checked=plan.traffic_enabled;$('#trafficMode').value=plan.traffic_daily_at?'daily':'interval';$('#trafficTime').value=plan.traffic_daily_at||'03:00';$('#trafficHours').value=String(plan.traffic_interval_hours);$('#accountEnabled').checked=plan.account_enabled;$('#accountTime').value=plan.account_daily_at;}renderTrafficMode();
  const applied=Number(plan.applied_version)>=Number(plan.config_version)&&Number(plan.config_version)>0;
  $('#autoStatus').textContent=(applied?`设备已应用 v${plan.applied_version}`:`云端已保存 v${plan.config_version}，待设备应用`)+(plansEditVersion===null?'':' · 有未保存的修改');
  const device=agent?.status?.plans;const next=device?.configVersion===Number(plan.config_version)?(device.plans||[]).filter(p=>p.enabled&&p.nextRunAt).map(p=>(p.planId==='traffic-hourly'?'投流':'账户中心')+'下次 '+new Date(p.nextRunAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})):[];
@@ -35,10 +36,10 @@ function renderGroupedPlans(){
  return true;
 }
 async function saveGroupedPlans(){
- if(state.autoBusy)return;const hours=Number($('#trafficHours').value),dailyAt=$('#accountTime').value;
- if(!Number.isInteger(hours)||hours<1||hours>168||!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)){toast('请填写1至168整数小时和有效每日时间','warn');return;}
+ if(state.autoBusy)return;const trafficDailyAt=$('#trafficMode').value==='daily'?$('#trafficTime').value:null,hours=trafficDailyAt!==null?24:Number($('#trafficHours').value),dailyAt=$('#accountTime').value;
+ if(!Number.isInteger(hours)||hours<1||hours>168||!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyAt)||(trafficDailyAt!==null&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(trafficDailyAt))){toast('请填写1至168整数小时和有效每日时间','warn');return;}
  const agentId=state.selectedAgentId;state.autoBusy=true;$('#savePlans').disabled=true;renderGroupedPlans();
- try{const result=await api('save_plans',{agentId,trafficEnabled:$('#trafficEnabled').checked,intervalHours:hours,accountEnabled:$('#accountEnabled').checked,dailyAt,expectedVersion:plansEditVersion??Number(state.schedules?.plan?.config_version||0)});
+ try{const result=await api('save_plans',{agentId,trafficEnabled:$('#trafficEnabled').checked,intervalHours:hours,trafficDailyAt,accountEnabled:$('#accountEnabled').checked,dailyAt,expectedVersion:plansEditVersion??Number(state.schedules?.plan?.config_version||0)});
   if(state.selectedAgentId!==agentId)return;
   plansEditVersion=null;toast(`两套计划已保存 v${result.plan.config_version}，等待设备应用；不会立即采集。`,'ok');await loadSchedules();
  }catch(error){if(error.conflict){plansEditVersion=null;await loadSchedules();}toast(error.message,'error');}
@@ -1013,7 +1014,7 @@ function wireEvents() {
   $("#startAuto").addEventListener("click", () => saveAuto(true));
   $("#stopAuto").addEventListener("click", () => saveAuto(false, true));
   $('#savePlans')?.addEventListener('click',saveGroupedPlans);
-  for(const id of ['#trafficEnabled','#trafficHours','#accountEnabled','#accountTime'])$(id)?.addEventListener('input',()=>{if(plansEditVersion===null)plansEditVersion=Number(state.schedules?.plan?.config_version||0);});
+  for(const id of ['#trafficEnabled','#trafficMode','#trafficTime','#trafficHours','#accountEnabled','#accountTime'])$(id)?.addEventListener('input',()=>{if(plansEditVersion===null)plansEditVersion=Number(state.schedules?.plan?.config_version||0);if(id==='#trafficMode')renderTrafficMode();});
   $("#manualRun").addEventListener("click", manualRun);
   $("#manualStop").addEventListener("click", manualStop);
   $("#manualPreset3").addEventListener("click", fillPreset3Days);

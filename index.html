@@ -62,8 +62,8 @@
         <button id="stopAuto" class="schedule-save danger-ghost">停止自动采集</button>
       </div>
       <div id="groupPlans">
-        <div class="schedule-line"><label class="schedule-switch"><input id="trafficEnabled" type="checkbox">投流自动采集</label><span>每</span><input id="trafficHours" type="number" min="1" max="168" value="1" aria-label="投流间隔小时"><span>小时</span></div>
-        <small>每日02:00–08:00不启动新一轮，已开始的本轮采完（北京时间）。</small>
+        <div class="schedule-line"><label class="schedule-switch"><input id="trafficEnabled" type="checkbox">投流自动采集</label><select id="trafficMode" aria-label="投流采集频率"><option value="interval">按间隔</option><option value="daily">每天</option></select><span id="trafficIntervalFields">每 <input id="trafficHours" type="number" min="1" max="168" value="1" aria-label="投流间隔小时"> 小时</span><span id="trafficDailyFields" hidden><input id="trafficTime" type="time" value="03:00" aria-label="投流每日采集时间"> 北京时间</span></div>
+        <small>每天模式按设定时间运行；间隔模式每日02:00–08:00不启动新一轮，已开始的本轮采完（北京时间）。</small>
         <div class="schedule-line account-plan"><label class="schedule-switch"><input id="accountEnabled" type="checkbox">账户中心</label><span>每天</span><input id="accountTime" type="time" value="05:00" aria-label="账户中心每日采集时间"><span>北京时间</span><button id="savePlans" class="schedule-save">保存计划</button></div>
       </div>
       <small id="autoStatus">未开启 · 自动采集最近 3 天 · 采集机需保持开机</small>
@@ -163,6 +163,6 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
-<script src="./console.js?v=20261025-independent-plans-quiet-1"></script>
+<script src="./console.js?v=20261027-daily-traffic-1"></script>
 </body>
 </html>
