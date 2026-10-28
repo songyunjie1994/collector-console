@@ -13,10 +13,10 @@
  */
 
 const CONFIG = Object.freeze({
-  supabaseUrl: "https://qskjpexmoerowosnhidj.supabase.co",
-  publishableKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFza2pwZXhtb2Vyb3dvc25oaWRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1NTE5NzEsImV4cCI6MjEwODEyNzk3MX0.Cbz7RjmIHLbbYwImanzl8O9wsNJfD6n8Zq_ne_Hz2Nw",
+  supabaseUrl: "https://39.105.205.48",
+  publishableKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzkzMTcyODY3LCJleHAiOjE5NTA4NTI4Njd9.oMhUKE4Y-rcHtNxxxjkR77CQUIDfl0YH5LsCdVz7uKs",
   // 页面托管在 GitHub Pages，接口在 Supabase 函数上 —— 是跨域调用。
-  apiPath: "https://qskjpexmoerowosnhidj.supabase.co/functions/v1/collector-admin/api"
+  apiPath: "https://39.105.205.48/functions/v1/collector-admin/api"
 });
 
 const SESSION_KEY = "qca-console-session";
@@ -205,7 +205,7 @@ async function signIn(email, password) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const raw = body.error_description || body.msg || "";
-    const message = /invalid login credentials/i.test(raw) ? "邮箱或密码不对"
+    const message = /invalid login credentials/i.test(raw) ? "账号或密码不对"
       : /email not confirmed/i.test(raw) ? "这个邮箱还没确认（需要在 Supabase 里勾 Auto Confirm）"
         : raw || `登录失败（HTTP ${response.status}）`;
     throw new Error(message);
